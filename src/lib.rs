@@ -4,4 +4,5 @@
 //! logic can be tested without starting the UI.
 
 pub mod app;
+pub mod fs;
 pub mod ui;
