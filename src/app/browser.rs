@@ -342,7 +342,7 @@ mod tests {
         fs::create_dir(dir.path().join("docs")).unwrap();
         fs::write(dir.path().join("file10.txt"), b"1234567890").unwrap();
         fs::write(dir.path().join("file2.txt"), b"12").unwrap();
-        fs::write(dir.path().join(".env"), b"").unwrap();
+        crate::fs::test_support::hidden_file(dir.path(), ".env");
         fs::write(dir.path().join("src").join("main.rs"), b"").unwrap();
         dir
     }

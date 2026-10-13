@@ -176,7 +176,9 @@ pub fn create_file(parent: &Path, name: &str) -> Result<PathBuf, OpError> {
 }
 
 fn exists_or_io(err: io::Error, path: &Path) -> OpError {
-    if err.kind() == io::ErrorKind::AlreadyExists {
+    // Windows reports "access denied" when creating a file where a folder
+    // is, so check what's actually there.
+    if err.kind() == io::ErrorKind::AlreadyExists || fs::symlink_metadata(path).is_ok() {
         OpError::AlreadyExists(path.to_path_buf())
     } else {
         OpError::Io(err)
@@ -214,9 +216,10 @@ pub fn restore_from_trash(paths: &[PathBuf]) -> Result<(), OpError> {
     let trashed = trash::os_limited::list().map_err(|err| OpError::Trash(err.to_string()))?;
     let mut found = Vec::with_capacity(paths.len());
     for path in paths {
+        let wanted = comparable(path);
         let item = trashed
             .iter()
-            .filter(|item| item.original_path() == *path)
+            .filter(|item| comparable(&item.original_path()) == wanted)
             .max_by_key(|item| item.time_deleted)
             .ok_or_else(|| {
                 OpError::Trash(format!(
@@ -229,6 +232,23 @@ pub fn restore_from_trash(paths: &[PathBuf]) -> Result<(), OpError> {
         found.push(item.clone());
     }
     trash::os_limited::restore_all(found).map_err(|err| OpError::Trash(err.to_string()))
+}
+
+/// A form of `path` that compares equal however it was spelled: the same
+/// folder can appear as `C:\Users\RUNNER~1` or `C:\Users\runneradmin`, in
+/// any case. The item itself is gone, so only its parent is resolved.
+fn comparable(path: &Path) -> PathBuf {
+    let resolved = match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => fs::canonicalize(parent)
+            .map(|p| p.join(name))
+            .unwrap_or_else(|_| path.to_path_buf()),
+        _ => path.to_path_buf(),
+    };
+    if cfg!(windows) {
+        PathBuf::from(resolved.to_string_lossy().to_lowercase())
+    } else {
+        resolved
+    }
 }
 
 /// Deletes items for good (Shift Del). Folders go with everything inside.

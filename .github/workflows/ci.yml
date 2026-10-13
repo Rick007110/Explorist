@@ -25,8 +25,10 @@ jobs:
         run: |
           set -o pipefail
           cargo test 2>&1 | tee test-output.txt || {
-            # Surface failures as annotations so they show without the full log.
-            grep -E "panicked|left:|right:|FAILED|Error|error\[" test-output.txt | head -40 |
+            # Surface failures as annotations so they show without the full
+            # log. GitHub keeps at most 10 per step, so list names in one.
+            echo "::error::Failed: $(grep -oE '^test [^ ]+ \.\.\. FAILED' test-output.txt | cut -d' ' -f2 | tr '\n' ' ')"
+            grep -E "panicked|left:|right:|error\[" test-output.txt | head -9 |
               while IFS= read -r line; do echo "::error::$line"; done
             exit 1
           }

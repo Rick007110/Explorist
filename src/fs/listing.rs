@@ -311,6 +311,12 @@ mod tests {
             listing.recv_timeout(WAIT),
             Some(ListingEvent::Done { .. }) | None
         ) {}
+        // The reader wakes the UI just after sending, so the last wake can
+        // land a moment after Done arrives.
+        let deadline = Instant::now() + WAIT;
+        while wakes.load(Ordering::SeqCst) < 2 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(1));
+        }
         assert_eq!(wakes.load(Ordering::SeqCst), 2);
     }
 
