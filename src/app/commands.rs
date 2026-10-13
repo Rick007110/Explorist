@@ -37,6 +37,9 @@ pub enum Command {
     Move(MoveTarget, MoveMode),
     /// Ctrl Space: toggle the focused row's selection.
     ToggleFocused,
+    OpenSettings,
+    /// Add the selected folder to Favorites.
+    PinFolder,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,7 +80,59 @@ impl Command {
             Self::Escape => "Cancel",
             Self::Move(..) => "Move",
             Self::ToggleFocused => "Toggle selection",
+            Self::OpenSettings => "Settings",
+            Self::PinFolder => "Pin to Favorites",
         }
+    }
+
+    /// Stable name used in the settings file for custom shortcuts. `None`
+    /// for commands that can't be rebound.
+    pub fn id(self) -> Option<&'static str> {
+        Some(match self {
+            Self::Open => "open",
+            Self::GoBack => "go_back",
+            Self::GoForward => "go_forward",
+            Self::GoUp => "go_up",
+            Self::Refresh => "refresh",
+            Self::EditPath => "edit_path",
+            Self::Filter => "filter",
+            Self::Rename => "rename",
+            Self::NewFolder => "new_folder",
+            Self::NewFile => "new_file",
+            Self::Trash => "trash",
+            Self::SelectAll => "select_all",
+            Self::ToggleHidden => "toggle_hidden",
+            Self::Undo => "undo",
+            Self::OpenTerminal => "open_terminal",
+            Self::OpenSettings => "open_settings",
+            // Clipboard shortcuts are handled by the system layer, and
+            // navigation keys are fixed.
+            _ => return None,
+        })
+    }
+
+    /// Commands listed on the Keyboard settings page, in order.
+    pub const CUSTOMIZABLE: [Command; 16] = [
+        Command::EditPath,
+        Command::Filter,
+        Command::Rename,
+        Command::NewFile,
+        Command::NewFolder,
+        Command::Trash,
+        Command::Undo,
+        Command::SelectAll,
+        Command::ToggleHidden,
+        Command::GoBack,
+        Command::GoForward,
+        Command::GoUp,
+        Command::Refresh,
+        Command::Open,
+        Command::OpenTerminal,
+        Command::OpenSettings,
+    ];
+
+    pub fn from_id(id: &str) -> Option<Command> {
+        Self::CUSTOMIZABLE.into_iter().find(|c| c.id() == Some(id))
     }
 
     /// Whether the shortcut still works while a text field has focus.

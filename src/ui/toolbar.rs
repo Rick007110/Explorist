@@ -57,7 +57,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 ui.add_space(10.0);
 
                 // Path bar takes what's left after the right-hand buttons.
-                let right_width = 2.0 * size::BUTTON + 2.0;
+                let right_width = 3.0 * size::BUTTON + 2.0 * 2.0;
                 let width = (ui.available_width() - right_width - 10.0).max(120.0);
                 path_bar(ui, app, width);
 
@@ -91,6 +91,18 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 .clicked()
                 {
                     app.run(&ctx, Command::Refresh);
+                }
+                if widgets::icon_button(
+                    ui,
+                    &p,
+                    Icon::Config,
+                    &tooltip(Command::OpenSettings),
+                    true,
+                    false,
+                )
+                .clicked()
+                {
+                    app.run(&ctx, Command::OpenSettings);
                 }
             });
         });

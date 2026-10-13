@@ -41,51 +41,44 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
             );
             paint_logo(ui.painter(), logo, p.accent);
 
-            // The tab.
-            let name = app
+            // Tabs: the folder, plus Settings while it's open.
+            let mut x = logo.right() + 14.0;
+            let folder_name = app
                 .browser
                 .location()
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| app.browser.location().display().to_string());
-            let tab_left = logo.right() + 14.0;
-            let max_text = 240.0 - 12.0 - 16.0 - 8.0 - 12.0;
-            let galley = widgets::truncated(
+            let settings_open = app.view.settings_open;
+            let (rect, folder) = tab(
                 ui,
-                &name,
-                crate::ui::theme::text::body_medium(),
-                p.text,
-                max_text,
+                &p,
+                x,
+                &folder_name,
+                Icon::Folder,
+                !settings_open,
+                false,
+                "folder-tab",
             );
-            let tab = Rect::from_min_size(
-                Pos2::new(tab_left, bar.bottom() - 34.0),
-                vec2(12.0 + 16.0 + 8.0 + galley.size().x + 12.0, 34.0),
-            );
-            ui.painter().rect_filled(
-                tab,
-                CornerRadius {
-                    nw: radius::MD,
-                    ne: radius::MD,
-                    sw: 0,
-                    se: 0,
-                },
-                p.bg_2,
-            );
-            let icon_rect = Rect::from_min_size(
-                Pos2::new(tab.left() + 12.0, tab.center().y - 8.0),
-                vec2(16.0, 16.0),
-            );
-            icons::paint(ui.painter(), icon_rect, Icon::Folder, 16.0, p.accent);
-            widgets::paint_aligned(
-                ui.painter(),
-                Rect::from_min_max(
-                    Pos2::new(icon_rect.right() + 8.0, tab.top()),
-                    tab.right_bottom(),
-                ),
-                galley,
-                Align2::LEFT_CENTER,
-                p.text,
-            );
+            x = rect.right() + 2.0;
+            if folder.clicked {
+                app.view.settings_open = false;
+            }
+            if settings_open {
+                let (_, settings) = tab(
+                    ui,
+                    &p,
+                    x,
+                    "Settings",
+                    Icon::Config,
+                    true,
+                    true,
+                    "settings-tab",
+                );
+                if settings.closed {
+                    app.view.settings_open = false;
+                }
+            }
 
             // Window buttons.
             let buttons = [
@@ -131,6 +124,111 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 }
             }
         });
+}
+
+/// What happened to a tab this frame.
+#[derive(Default)]
+pub struct TabResponse {
+    pub clicked: bool,
+    pub closed: bool,
+}
+
+/// Draws a 34 px tab at `left`. The active tab shares the toolbar color
+/// and "opens" into it; no underline, no accent fill.
+#[allow(clippy::too_many_arguments)]
+pub fn tab(
+    ui: &mut egui::Ui,
+    p: &crate::ui::theme::Palette,
+    left: f32,
+    label: &str,
+    icon: Icon,
+    active: bool,
+    closable: bool,
+    id: impl std::hash::Hash + std::fmt::Debug,
+) -> (Rect, TabResponse) {
+    let bar = ui.max_rect();
+    let font = if active {
+        crate::ui::theme::text::body_medium()
+    } else {
+        crate::ui::theme::text::body()
+    };
+    let color = if active { p.text } else { p.text_2 };
+    let close_w = if closable { 22.0 + 4.0 } else { 0.0 };
+    let galley = widgets::truncated(
+        ui,
+        label,
+        font,
+        color,
+        240.0 - 12.0 - 16.0 - 8.0 - 12.0 - close_w,
+    );
+    let rect = Rect::from_min_size(
+        Pos2::new(left, bar.bottom() - 34.0),
+        vec2(12.0 + 16.0 + 8.0 + galley.size().x + 12.0 + close_w, 34.0),
+    );
+    let response = ui.interact(rect, ui.id().with(&id), Sense::click());
+    let fill = if active {
+        p.bg_2
+    } else if response.hovered() {
+        p.bg_1
+    } else {
+        Color32::TRANSPARENT
+    };
+    let radius = CornerRadius {
+        nw: radius::MD,
+        ne: radius::MD,
+        sw: 0,
+        se: 0,
+    };
+    ui.painter().rect_filled(rect, radius, fill);
+    let icon_rect = Rect::from_min_size(
+        Pos2::new(rect.left() + 12.0, rect.center().y - 8.0),
+        vec2(16.0, 16.0),
+    );
+    let icon_color = if icon == Icon::Folder {
+        p.accent
+    } else {
+        color
+    };
+    icons::paint(ui.painter(), icon_rect, icon, 16.0, icon_color);
+    widgets::paint_aligned(
+        ui.painter(),
+        Rect::from_min_max(
+            Pos2::new(icon_rect.right() + 8.0, rect.top()),
+            rect.right_bottom(),
+        ),
+        galley,
+        Align2::LEFT_CENTER,
+        color,
+    );
+    let mut out = TabResponse {
+        clicked: response.clicked(),
+        closed: response.middle_clicked(),
+    };
+    if closable {
+        let close = Rect::from_center_size(
+            Pos2::new(rect.right() - 8.0 - 11.0, rect.center().y),
+            vec2(22.0, 22.0),
+        );
+        let r = ui
+            .interact(close, ui.id().with((&id, "close")), Sense::click())
+            .on_hover_text("Close tab");
+        if r.hovered() {
+            ui.painter()
+                .rect_filled(close, CornerRadius::same(5), p.hover);
+        }
+        icons::paint(
+            ui.painter(),
+            close,
+            Icon::Close,
+            12.0,
+            if r.hovered() { p.text } else { p.muted },
+        );
+        if r.clicked() {
+            out.closed = true;
+            out.clicked = false;
+        }
+    }
+    (rect, out)
 }
 
 #[derive(Clone, Copy)]

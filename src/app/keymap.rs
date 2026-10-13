@@ -1,6 +1,11 @@
 //! Keyboard shortcuts.
 //!
-//! Modifiers must match exactly, so Shift Del never triggers Del.
+//! Modifiers must match exactly, so Shift Del never triggers Del. Users can
+//! rebind commands in Settings; the active keymap is installed globally so
+//! menus and tooltips show the current keys.
+
+use std::collections::BTreeMap;
+use std::sync::RwLock;
 
 use egui::Key;
 
@@ -90,6 +95,7 @@ const TABLE: &[(Mods, Key, Command)] = &[
     (Mods::CTRL, Key::Backtick, Command::OpenTerminal),
     (Mods::NONE, Key::Escape, Command::Escape),
     (Mods::CTRL, Key::Space, Command::ToggleFocused),
+    (Mods::CTRL, Key::Comma, Command::OpenSettings),
 ];
 
 /// Arrow-style keys, each in three flavors: plain moves the selection,
@@ -103,24 +109,201 @@ const MOVES: [(Key, MoveTarget); 6] = [
     (Key::End, MoveTarget::Last),
 ];
 
-/// The command for a key press, if any.
+/// Bindings in effect: the defaults with the user's overrides applied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Keymap {
+    bindings: Vec<(Mods, Key, Command)>,
+}
+
+impl Default for Keymap {
+    fn default() -> Self {
+        Self {
+            bindings: TABLE.to_vec(),
+        }
+    }
+}
+
+impl Keymap {
+    /// The defaults with `overrides` (command id → "Ctrl Shift N") applied.
+    /// An overridden command loses its default keys; a key taken by an
+    /// override is removed from whatever else used it. Unreadable entries
+    /// are ignored.
+    pub fn new(overrides: &BTreeMap<String, String>) -> Self {
+        let mut map = Self::default();
+        for (id, keys) in overrides {
+            if let (Some(command), Some((mods, key))) = (Command::from_id(id), parse_shortcut(keys))
+            {
+                map.bind(command, mods, key);
+            }
+        }
+        map
+    }
+
+    /// Makes `mods`+`key` run `command`, replacing its old keys and taking
+    /// the keys away from anything else. Returns the command that lost them.
+    pub fn bind(&mut self, command: Command, mods: Mods, key: Key) -> Option<Command> {
+        let previous = self.conflict(mods, key).filter(|c| *c != command);
+        self.bindings
+            .retain(|(m, k, c)| *c != command && !(*m == mods && *k == key));
+        self.bindings.push((mods, key, command));
+        previous
+    }
+
+    /// Which command `mods`+`key` currently runs.
+    pub fn conflict(&self, mods: Mods, key: Key) -> Option<Command> {
+        self.bindings
+            .iter()
+            .find(|(m, k, _)| *m == mods && *k == key)
+            .map(|(_, _, c)| *c)
+    }
+
+    /// The command for a key press, if any.
+    pub fn lookup(&self, mods: Mods, key: Key) -> Option<Command> {
+        if let Some(command) = self.conflict(mods, key) {
+            return Some(command);
+        }
+        if mods == Mods::ALT
+            && let Some(n) = FAVORITE_KEYS.iter().position(|k| *k == key)
+        {
+            return Some(Command::JumpToPlace(n as u8));
+        }
+        let (_, target) = MOVES.iter().find(|(k, _)| *k == key)?;
+        let mode = match mods {
+            Mods::NONE => MoveMode::Replace,
+            Mods::SHIFT => MoveMode::Extend,
+            Mods::CTRL => MoveMode::FocusOnly,
+            _ => return None,
+        };
+        Some(Command::Move(*target, mode))
+    }
+
+    /// The first binding for `command`.
+    pub fn binding(&self, command: Command) -> Option<(Mods, Key)> {
+        self.bindings
+            .iter()
+            .find(|(_, _, c)| *c == command)
+            .map(|(m, k, _)| (*m, *k))
+    }
+
+    /// The shortcut shown next to a command, as the design writes it:
+    /// "Ctrl Shift C".
+    pub fn label(&self, command: Command) -> Option<String> {
+        if let Command::JumpToPlace(n) = command {
+            return Some(format!("Alt {}", n + 1));
+        }
+        let (mods, key) = self.binding(command)?;
+        Some(format_shortcut(mods, key))
+    }
+
+    /// The bindings that differ from the defaults, for the settings file.
+    pub fn overrides(&self) -> BTreeMap<String, String> {
+        let defaults = Self::default();
+        Command::CUSTOMIZABLE
+            .into_iter()
+            .filter(|c| self.binding(*c) != defaults.binding(*c))
+            .filter_map(|c| Some((c.id()?.to_owned(), self.label(c)?)))
+            .collect()
+    }
+}
+
+static ACTIVE: RwLock<Option<Keymap>> = RwLock::new(None);
+
+/// Makes `keymap` the one used for lookups and labels.
+pub fn install(keymap: Keymap) {
+    if let Ok(mut active) = ACTIVE.write() {
+        *active = Some(keymap);
+    }
+}
+
+fn with_active<R>(f: impl FnOnce(&Keymap) -> R) -> R {
+    match ACTIVE.read() {
+        Ok(guard) => match guard.as_ref() {
+            Some(map) => f(map),
+            None => f(&Keymap::default()),
+        },
+        Err(_) => f(&Keymap::default()),
+    }
+}
+
+/// The command for a key press under the installed keymap.
 pub fn lookup(mods: Mods, key: Key) -> Option<Command> {
-    if let Some(&(_, _, command)) = TABLE.iter().find(|(m, k, _)| *m == mods && *k == key) {
-        return Some(command);
+    with_active(|map| map.lookup(mods, key))
+}
+
+/// The installed shortcut for `command`, e.g. "Ctrl Shift N".
+pub fn shortcut_label(command: Command) -> Option<String> {
+    with_active(|map| map.label(command))
+}
+
+/// Short display names for keys whose egui name is long or unclear.
+const KEY_NAMES: [(Key, &str); 8] = [
+    (Key::Comma, ","),
+    (Key::Delete, "Del"),
+    (Key::Escape, "Esc"),
+    (Key::Backtick, "`"),
+    (Key::ArrowLeft, "←"),
+    (Key::ArrowRight, "→"),
+    (Key::ArrowUp, "↑"),
+    (Key::ArrowDown, "↓"),
+];
+
+/// Shift, Ctrl, Alt and the Windows key on their own: never a shortcut.
+pub fn is_modifier(key: Key) -> bool {
+    matches!(
+        key,
+        Key::ShiftLeft
+            | Key::ShiftRight
+            | Key::ControlLeft
+            | Key::ControlRight
+            | Key::AltLeft
+            | Key::AltRight
+            | Key::SuperLeft
+            | Key::SuperRight
+    )
+}
+
+/// "Ctrl Shift N".
+pub fn format_shortcut(mods: Mods, key: Key) -> String {
+    let mut parts = Vec::new();
+    if mods.ctrl {
+        parts.push("Ctrl");
     }
-    if mods == Mods::ALT
-        && let Some(n) = FAVORITE_KEYS.iter().position(|k| *k == key)
-    {
-        return Some(Command::JumpToPlace(n as u8));
+    if mods.shift {
+        parts.push("Shift");
     }
-    let (_, target) = MOVES.iter().find(|(k, _)| *k == key)?;
-    let mode = match mods {
-        Mods::NONE => MoveMode::Replace,
-        Mods::SHIFT => MoveMode::Extend,
-        Mods::CTRL => MoveMode::FocusOnly,
-        _ => return None,
-    };
-    Some(Command::Move(*target, mode))
+    if mods.alt {
+        parts.push("Alt");
+    }
+    let name = KEY_NAMES
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map_or_else(|| key.name(), |(_, n)| n);
+    parts.push(name);
+    parts.join(" ")
+}
+
+/// Reads "Ctrl Shift N" back. Case doesn't matter for modifiers.
+pub fn parse_shortcut(text: &str) -> Option<(Mods, Key)> {
+    let mut mods = Mods::NONE;
+    let mut key = None;
+    for part in text.split_whitespace() {
+        match part.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => mods.ctrl = true,
+            "shift" => mods.shift = true,
+            "alt" => mods.alt = true,
+            _ => {
+                if key.is_some() {
+                    return None;
+                }
+                key = KEY_NAMES
+                    .iter()
+                    .find(|(_, n)| *n == part)
+                    .map(|(k, _)| *k)
+                    .or_else(|| Key::from_name(part));
+            }
+        }
+    }
+    Some((mods, key?))
 }
 
 /// egui-winit turns some shortcuts into clipboard events before the app
@@ -173,43 +356,84 @@ impl PasteDetector {
     }
 }
 
-/// The shortcut shown next to a command in menus, as the design writes it:
-/// "Ctrl Shift C". The first listed binding wins.
-pub fn shortcut_label(command: Command) -> Option<String> {
-    if let Command::JumpToPlace(n) = command {
-        return Some(format!("Alt {}", n + 1));
-    }
-    let (mods, key, _) = TABLE.iter().find(|(_, _, c)| *c == command)?;
-    let mut parts = Vec::new();
-    if mods.ctrl {
-        parts.push("Ctrl");
-    }
-    if mods.shift {
-        parts.push("Shift");
-    }
-    if mods.alt {
-        parts.push("Alt");
-    }
-    let key_name = match key {
-        Key::Delete => "Del",
-        Key::Escape => "Esc",
-        Key::Backtick => "`",
-        Key::ArrowLeft => "←",
-        Key::ArrowRight => "→",
-        Key::ArrowUp => "↑",
-        Key::ArrowDown => "↓",
-        other => other.name(),
-    };
-    parts.push(key_name);
-    Some(parts.join(" "))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn overrides_rebind_and_steal_keys() {
+        let mut overrides = BTreeMap::new();
+        overrides.insert("rename".to_owned(), "Ctrl R".to_owned());
+        overrides.insert("bogus".to_owned(), "Ctrl Q".to_owned());
+        overrides.insert("filter".to_owned(), "not a key".to_owned());
+        let map = Keymap::new(&overrides);
+        assert_eq!(map.lookup(Mods::CTRL, Key::R), Some(Command::Rename));
+        assert_eq!(map.lookup(Mods::NONE, Key::F2), None, "old key is gone");
+        // Refresh still has F5, just not Ctrl R.
+        assert_eq!(map.lookup(Mods::NONE, Key::F5), Some(Command::Refresh));
+        assert_eq!(map.lookup(Mods::CTRL, Key::F), Some(Command::Filter));
+        assert_eq!(
+            map.overrides().get("rename").map(String::as_str),
+            Some("Ctrl R")
+        );
+        // Refresh keeps its first key (F5), so only rename needs saving;
+        // reloading reproduces the same bindings.
+        assert_eq!(map.overrides().len(), 1);
+        let reloaded = Keymap::new(&map.overrides());
+        for command in Command::CUSTOMIZABLE {
+            assert_eq!(reloaded.binding(command), map.binding(command));
+        }
+    }
+
+    #[test]
+    fn bind_reports_what_lost_its_keys() {
+        let mut map = Keymap::default();
+        assert_eq!(
+            map.bind(Command::Undo, Mods::CTRL, Key::A),
+            Some(Command::SelectAll)
+        );
+        assert_eq!(map.binding(Command::SelectAll), None);
+        assert_eq!(
+            map.bind(Command::Undo, Mods::CTRL, Key::A),
+            None,
+            "already its own"
+        );
+    }
+
+    #[test]
+    fn shortcuts_format_and_parse() {
+        for (mods, key) in [
+            (Mods::CTRL_SHIFT, Key::N),
+            (Mods::SHIFT, Key::Delete),
+            (Mods::ALT, Key::ArrowLeft),
+            (Mods::CTRL, Key::Backtick),
+            (Mods::NONE, Key::F2),
+            (Mods::CTRL, Key::Comma),
+        ] {
+            let text = format_shortcut(mods, key);
+            assert_eq!(parse_shortcut(&text), Some((mods, key)), "{text}");
+        }
+        assert_eq!(
+            parse_shortcut("ctrl shift n"),
+            Some((Mods::CTRL_SHIFT, Key::N))
+        );
+        assert_eq!(parse_shortcut("Ctrl"), None);
+        assert_eq!(parse_shortcut("Ctrl A B"), None);
+    }
+
+    #[test]
+    fn every_customizable_command_has_an_id_and_default() {
+        let map = Keymap::default();
+        for command in Command::CUSTOMIZABLE {
+            let id = command.id().expect("id");
+            assert_eq!(Command::from_id(id), Some(command));
+            assert!(map.binding(command).is_some(), "{id} has no default key");
+        }
+    }
+
+    #[test]
     fn modifiers_must_match_exactly() {
+        let lookup = |m, k| Keymap::default().lookup(m, k);
         assert_eq!(lookup(Mods::NONE, Key::Delete), Some(Command::Trash));
         assert_eq!(
             lookup(Mods::SHIFT, Key::Delete),
@@ -222,6 +446,7 @@ mod tests {
 
     #[test]
     fn arrows_come_in_three_flavors() {
+        let lookup = |m, k| Keymap::default().lookup(m, k);
         assert_eq!(
             lookup(Mods::NONE, Key::ArrowDown),
             Some(Command::Move(MoveTarget::Down, MoveMode::Replace))
@@ -240,6 +465,7 @@ mod tests {
 
     #[test]
     fn alt_digits_jump_to_places() {
+        let lookup = |m, k| Keymap::default().lookup(m, k);
         assert_eq!(lookup(Mods::ALT, Key::Num1), Some(Command::JumpToPlace(0)));
         assert_eq!(lookup(Mods::ALT, Key::Num9), Some(Command::JumpToPlace(8)));
         assert_eq!(lookup(Mods::NONE, Key::Num1), None);
@@ -296,6 +522,8 @@ mod tests {
 
     #[test]
     fn labels_match_the_design() {
+        let map = Keymap::default();
+        let shortcut_label = |c| map.label(c);
         assert_eq!(
             shortcut_label(Command::CopyPath).as_deref(),
             Some("Ctrl Shift C")

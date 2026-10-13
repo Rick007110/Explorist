@@ -34,3 +34,28 @@ pub fn open_terminal(dir: &Path) -> io::Result<()> {
         .spawn()
         .map(drop)
 }
+
+/// Whether the system wants animations: Windows' "Animation effects"
+/// setting. Always true elsewhere.
+#[cfg(windows)]
+pub fn animations_enabled() -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SPI_GETCLIENTAREAANIMATION, SystemParametersInfoW,
+    };
+    let mut enabled: i32 = 1;
+    // SAFETY: SPI_GETCLIENTAREAANIMATION writes one BOOL to the pointer.
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            (&mut enabled as *mut i32).cast(),
+            0,
+        )
+    };
+    ok == 0 || enabled != 0
+}
+
+#[cfg(not(windows))]
+pub fn animations_enabled() -> bool {
+    true
+}

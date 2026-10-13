@@ -34,6 +34,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
 
             let location = app.browser.location().to_path_buf();
             let mut go = None;
+            let mut unpin = None;
             let drives = app.drives.lock().map(|d| d.clone()).unwrap_or_default();
             // Highlight the most specific place containing the current folder.
             let active_path = app
@@ -90,8 +91,18 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                     label,
                     fg,
                 );
-                if response.on_hover_text(tip).clicked() {
+                let pinned = place.icon == PlaceIcon::Folder;
+                let response = response.on_hover_text(tip);
+                if response.clicked() {
                     go = Some(place.path.clone());
+                }
+                if pinned {
+                    response.context_menu(|ui| {
+                        crate::ui::menu::style(ui);
+                        if crate::ui::menu::plain_item(ui, &p, "Unpin from Favorites") {
+                            unpin = Some(place.path.clone());
+                        }
+                    });
                 }
             }
 
@@ -196,6 +207,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
 
             if let Some(path) = go {
                 app.browser.navigate(path);
+            }
+            if let Some(path) = unpin {
+                app.unpin(&path);
             }
         });
 }

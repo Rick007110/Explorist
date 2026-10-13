@@ -45,7 +45,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                     let loading = matches!(state, LoadState::Loading { .. });
                     header(ui, app);
                     if loading {
-                        progress_line(ui, &p);
+                        progress_line(ui, &p, app.reduce_motion());
                     }
                     if app.browser.total() == 0 && loading {
                         skeleton(ui, app);
@@ -172,17 +172,24 @@ fn header(ui: &mut egui::Ui, app: &mut ExploristApp) {
             icons::paint(ui.painter(), r, icon, 12.0, p.text_2);
         }
         if response.clicked() {
-            app.browser.sort_by(column);
+            app.sort_by(column);
         }
     }
 }
 
 /// While reading there's no total to measure against, so a short bar
 /// slides along the line.
-fn progress_line(ui: &mut egui::Ui, p: &Palette) {
+fn progress_line(ui: &mut egui::Ui, p: &Palette, still: bool) {
     let (full, _) = ui.allocate_exact_size(vec2(ui.available_width(), 2.0), Sense::hover());
     let rect = full.shrink2(vec2(SIDE, 0.0));
     ui.painter().rect_filled(rect, 0.0, p.scroll_track);
+    if still {
+        // Reduce motion: a steady partial bar instead of a sliding one.
+        let mut bar = rect;
+        bar.set_width(rect.width() * 0.3);
+        ui.painter().rect_filled(bar, 0.0, p.accent);
+        return;
+    }
     let t = ui.input(|i| i.time) as f32;
     let width = rect.width() * 0.3;
     let x = rect.left() + (t * 0.8).fract() * (rect.width() + width) - width;
@@ -337,7 +344,13 @@ fn draw_row(
         let (size_text, f, c) = meta(entry.size.map_or_else(|| "—".to_owned(), format::size));
         let g = ui.painter().layout_no_wrap(size_text, f, c);
         widgets::paint_aligned(ui.painter(), size_cell, g, Align2::RIGHT_CENTER, c);
-        let (date, f, c) = meta(entry.modified.map(format::date).unwrap_or_default());
+        let date_format = app.settings.date_format;
+        let (date, f, c) = meta(
+            entry
+                .modified
+                .map(|t| format::date(t, date_format))
+                .unwrap_or_default(),
+        );
         let g = ui.painter().layout_no_wrap(date, f, c);
         widgets::paint_aligned(ui.painter(), mod_cell, g, Align2::LEFT_CENTER, c);
         let g = widgets::truncated(
@@ -474,6 +487,7 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
     let p = app.palette;
     menu::style(ui);
     let many = app.browser.selection.count() > 1;
+    let any_folder = app.browser.selected_entries().iter().any(|e| e.is_dir);
     let items: &[Option<(Command, &str)>] = &[
         Some((Command::Open, Command::Open.label())),
         Some((Command::OpenTerminal, Command::OpenTerminal.label())),
@@ -483,6 +497,7 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
         Some((Command::CopyPath, Command::CopyPath.label())),
         None,
         Some((Command::Rename, Command::Rename.label())),
+        Some((Command::PinFolder, Command::PinFolder.label())),
         None,
         Some((Command::Trash, Command::Trash.label())),
         Some((
@@ -493,7 +508,11 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
     for item in items {
         match item {
             Some((command, label)) => {
-                let enabled = !(many && *command == Command::Rename);
+                let enabled = match command {
+                    Command::Rename => !many,
+                    Command::PinFolder => any_folder,
+                    _ => true,
+                };
                 if menu::item_labeled(ui, &p, label, *command, enabled) {
                     commands.push(*command);
                 }
@@ -666,9 +685,13 @@ fn skeleton(ui: &mut egui::Ui, app: &ExploristApp) {
     let row_h = row_height(app.settings.density);
     let area = ui.available_rect_before_wrap().shrink2(vec2(SIDE, 0.0));
     // Opacity pulses 0.6 ↔ 1 every 1.4 s.
-    let t = ui.input(|i| i.time) as f32;
-    let pulse = 0.8 + 0.2 * (t * std::f32::consts::TAU / 1.4).cos();
-    ui.ctx().request_repaint();
+    let pulse = if app.reduce_motion() {
+        1.0
+    } else {
+        ui.ctx().request_repaint();
+        let t = ui.input(|i| i.time) as f32;
+        0.8 + 0.2 * (t * std::f32::consts::TAU / 1.4).cos()
+    };
 
     let painter = ui.painter();
     let mut y = area.top() + 4.0;

@@ -4,6 +4,7 @@
 use std::time::SystemTime;
 
 use chrono::{DateTime, Local};
+use serde::{Deserialize, Serialize};
 
 const UNITS: [&str; 6] = ["KB", "MB", "GB", "TB", "PB", "EB"];
 
@@ -56,10 +57,35 @@ pub fn count(n: u64) -> String {
     out
 }
 
-/// Formats a timestamp in local time as "2026-10-13 09:41".
-pub fn date(time: SystemTime) -> String {
+/// How dates appear in the Modified column and elsewhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DateFormat {
+    /// 2026-10-14 09:41
+    #[default]
+    Iso,
+    /// 14-10-2026 09:41
+    DayFirst,
+    /// 10/14/2026 9:41 AM
+    MonthFirst,
+}
+
+impl DateFormat {
+    pub const ALL: [DateFormat; 3] = [Self::Iso, Self::DayFirst, Self::MonthFirst];
+
+    fn pattern(self) -> &'static str {
+        match self {
+            Self::Iso => "%Y-%m-%d %H:%M",
+            Self::DayFirst => "%d-%m-%Y %H:%M",
+            Self::MonthFirst => "%m/%d/%Y %-I:%M %p",
+        }
+    }
+}
+
+/// Formats a timestamp in local time, e.g. "2026-10-13 09:41".
+pub fn date(time: SystemTime, format: DateFormat) -> String {
     DateTime::<Local>::from(time)
-        .format("%Y-%m-%d %H:%M")
+        .format(format.pattern())
         .to_string()
 }
 
@@ -109,8 +135,20 @@ mod tests {
     }
 
     #[test]
+    fn date_formats() {
+        use chrono::TimeZone;
+        let t: SystemTime = Local
+            .with_ymd_and_hms(2026, 10, 14, 9, 41, 0)
+            .unwrap()
+            .into();
+        assert_eq!(date(t, DateFormat::Iso), "2026-10-14 09:41");
+        assert_eq!(date(t, DateFormat::DayFirst), "14-10-2026 09:41");
+        assert_eq!(date(t, DateFormat::MonthFirst), "10/14/2026 9:41 AM");
+    }
+
+    #[test]
     fn dates_use_iso_order() {
-        let formatted = date(SystemTime::now());
+        let formatted = date(SystemTime::now(), DateFormat::Iso);
         assert_eq!(formatted.len(), "2026-10-13 09:41".len());
         assert_eq!(&formatted[4..5], "-");
         assert_eq!(&formatted[10..11], " ");

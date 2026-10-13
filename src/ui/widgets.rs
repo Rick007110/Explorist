@@ -281,3 +281,93 @@ pub fn paint_aligned(
     let pos = align.align_size_within_rect(galley.size(), rect).min;
     painter.galley(pos, galley, color);
 }
+
+/// A 36×20 on/off switch. Returns true when flipped.
+pub fn switch(ui: &mut Ui, palette: &Palette, on: &mut bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(36.0, 20.0), Sense::click());
+    if response.clicked() {
+        *on = !*on;
+    }
+    let track = if *on {
+        palette.accent
+    } else {
+        palette.kbd_border
+    };
+    let knob = if *on { palette.on_accent } else { palette.text };
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(10), track);
+    let x = if *on {
+        rect.right() - 10.0
+    } else {
+        rect.left() + 10.0
+    };
+    ui.painter()
+        .circle_filled(Pos2::new(x, rect.center().y), 8.0, knob);
+    focus_ring(ui, &response, rect, palette);
+    response.clicked()
+}
+
+/// A row of mutually exclusive options in a sunken track, as the design's
+/// "Comfortable · 30 px / Compact · 24 px". Returns the index clicked.
+pub fn segmented(
+    ui: &mut Ui,
+    palette: &Palette,
+    options: &[&str],
+    selected: usize,
+) -> Option<usize> {
+    let font = crate::ui::fonts::regular(12.5);
+    let galleys: Vec<_> = options
+        .iter()
+        .map(|o| {
+            ui.painter()
+                .layout_no_wrap((*o).to_owned(), font.clone(), palette.text)
+        })
+        .collect();
+    let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + 24.0).collect();
+    let total = widths.iter().sum::<f32>() + 2.0 * (options.len() as f32 - 1.0) + 8.0;
+    let (rect, _) = ui.allocate_exact_size(vec2(total, 36.0), Sense::hover());
+    ui.painter().rect(
+        rect,
+        CornerRadius::same(radius::MD),
+        palette.bg_1,
+        Stroke::new(1.0, palette.border),
+        StrokeKind::Inside,
+    );
+    let mut clicked = None;
+    let mut x = rect.left() + 4.0;
+    for (i, (galley, w)) in galleys.into_iter().zip(widths).enumerate() {
+        let item = Rect::from_min_size(Pos2::new(x, rect.top() + 4.0), vec2(w, 28.0));
+        let response = ui.interact(item, ui.id().with(("seg", options[i], i)), Sense::click());
+        let on = i == selected;
+        let fill = if on {
+            palette.border
+        } else if response.hovered() {
+            palette.hover
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter()
+            .rect_filled(item, CornerRadius::same(radius::SM), fill);
+        let color = if on { palette.text } else { palette.text_2 };
+        paint_aligned(ui.painter(), item, galley, Align2::CENTER_CENTER, color);
+        if response.clicked() && !on {
+            clicked = Some(i);
+        }
+        x += w + 2.0;
+    }
+    clicked
+}
+
+/// A round 28 px color swatch with a ring when chosen.
+pub fn swatch(ui: &mut Ui, palette: &Palette, color: Color32, chosen: bool, label: &str) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
+    let c = rect.center();
+    ui.painter().circle_filled(c, 14.0, color);
+    if chosen {
+        ui.painter()
+            .circle_stroke(c, 13.0, Stroke::new(2.0, palette.text));
+        ui.painter()
+            .circle_stroke(c, 10.5, Stroke::new(2.0, palette.bg_2));
+    }
+    response.on_hover_text(label).clicked()
+}

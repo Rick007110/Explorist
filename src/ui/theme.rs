@@ -148,7 +148,7 @@ impl Palette {
 
 /// The accent's shade for each theme. Light shades are darker so text in
 /// the accent color keeps 4.5:1 contrast.
-fn accent_color(accent: Accent, dark: bool) -> Color32 {
+pub fn accent_color(accent: Accent, dark: bool) -> Color32 {
     match (accent, dark) {
         (Accent::Teal, true) => hex(0x6CC5B0),
         (Accent::Teal, false) => hex(0x0D7366),

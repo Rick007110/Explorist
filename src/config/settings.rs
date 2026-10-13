@@ -1,10 +1,15 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::fs::sort::SortOrder;
+use crate::fs::format::DateFormat;
+use crate::fs::sort::{SortColumn, SortDirection, SortOrder};
+
+/// Folders that remember their own sort, at most.
+const MAX_FOLDER_SORTS: usize = 500;
 
 const APP_DIR: &str = "Explorist";
 const FILE_NAME: &str = "settings.toml";
@@ -24,6 +29,28 @@ pub struct Settings {
     /// Folders the user pinned under Favorites, in order.
     pub pinned: Vec<PathBuf>,
     pub updates: Updates,
+    pub start_in: StartIn,
+    /// The folder open when Explorist last closed.
+    pub last_folder: Option<PathBuf>,
+    pub date_format: DateFormat,
+    /// Sorts chosen by hand, per folder (path → column and direction).
+    pub folder_sorts: BTreeMap<String, FolderSort>,
+    /// Custom shortcuts: command id → "Ctrl Shift N".
+    pub shortcuts: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StartIn {
+    #[default]
+    Home,
+    LastFolder,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FolderSort {
+    pub column: SortColumn,
+    pub direction: SortDirection,
 }
 
 impl Default for Settings {
@@ -37,6 +64,11 @@ impl Default for Settings {
             show_hidden: false,
             pinned: Vec::new(),
             updates: Updates::default(),
+            start_in: StartIn::Home,
+            last_folder: None,
+            date_format: DateFormat::Iso,
+            folder_sorts: BTreeMap::new(),
+            shortcuts: BTreeMap::new(),
         }
     }
 }
@@ -109,6 +141,37 @@ pub enum LoadOutcome {
 }
 
 impl Settings {
+    /// The sort for `folder`: its own if the user sorted it by hand, else
+    /// the default. Folders-first and natural order are always global.
+    pub fn sort_for(&self, folder: &Path) -> SortOrder {
+        let mut sort = self.sort;
+        if let Some(own) = self.folder_sorts.get(&folder_key(folder)) {
+            sort.column = own.column;
+            sort.direction = own.direction;
+        }
+        sort
+    }
+
+    /// Remembers a sort chosen by hand for `folder`.
+    pub fn remember_sort(&mut self, folder: &Path, sort: SortOrder) {
+        let key = folder_key(folder);
+        let own = FolderSort {
+            column: sort.column,
+            direction: sort.direction,
+        };
+        if own.column == self.sort.column && own.direction == self.sort.direction {
+            self.folder_sorts.remove(&key);
+            return;
+        }
+        if self.folder_sorts.len() >= MAX_FOLDER_SORTS && !self.folder_sorts.contains_key(&key) {
+            let oldest = self.folder_sorts.keys().next().cloned();
+            if let Some(oldest) = oldest {
+                self.folder_sorts.remove(&oldest);
+            }
+        }
+        self.folder_sorts.insert(key, own);
+    }
+
     /// `%APPDATA%\Explorist\settings.toml`, or the platform equivalent.
     pub fn default_path() -> Option<PathBuf> {
         dirs::config_dir().map(|dir| dir.join(APP_DIR).join(FILE_NAME))
@@ -153,6 +216,16 @@ impl Settings {
     }
 }
 
+/// Folder paths compare case-insensitively on Windows.
+fn folder_key(folder: &Path) -> String {
+    let text = folder.to_string_lossy();
+    if cfg!(windows) {
+        text.to_lowercase()
+    } else {
+        text.into_owned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,6 +256,17 @@ mod tests {
                 last_checked: Some(1_791_900_000),
                 skipped_version: Some("0.2.0".into()),
             },
+            start_in: StartIn::LastFolder,
+            last_folder: Some(PathBuf::from("D:\\photos")),
+            date_format: DateFormat::DayFirst,
+            folder_sorts: BTreeMap::from([(
+                "d:\\photos".to_owned(),
+                FolderSort {
+                    column: SortColumn::Modified,
+                    direction: SortDirection::Descending,
+                },
+            )]),
+            shortcuts: BTreeMap::from([("rename".to_owned(), "Ctrl R".to_owned())]),
         };
         settings.save(&path).unwrap();
         assert!(!path.with_extension("toml.tmp").exists());
@@ -222,6 +306,38 @@ mod tests {
         };
         assert!(!path.exists());
         assert_eq!(fs::read_to_string(backup).unwrap(), "theme = \"neon\"");
+    }
+
+    #[test]
+    fn folders_remember_their_own_sort() {
+        let mut settings = Settings::default();
+        let photos = Path::new("/photos");
+        let by_date = SortOrder::default().clicked(SortColumn::Modified);
+        settings.remember_sort(photos, by_date);
+        assert_eq!(settings.sort_for(photos).column, SortColumn::Modified);
+        assert_eq!(
+            settings.sort_for(Path::new("/other")).column,
+            SortColumn::Name
+        );
+
+        // Going back to the default forgets the entry.
+        settings.remember_sort(photos, SortOrder::default());
+        assert!(settings.folder_sorts.is_empty());
+
+        // Global options still apply to folders with their own sort.
+        settings.remember_sort(photos, by_date);
+        settings.sort.folders_first = false;
+        assert!(!settings.sort_for(photos).folders_first);
+    }
+
+    #[test]
+    fn folder_sorts_are_capped() {
+        let mut settings = Settings::default();
+        let by_size = SortOrder::default().clicked(SortColumn::Size);
+        for i in 0..MAX_FOLDER_SORTS + 10 {
+            settings.remember_sort(Path::new(&format!("/f{i}")), by_size);
+        }
+        assert_eq!(settings.folder_sorts.len(), MAX_FOLDER_SORTS);
     }
 
     #[test]
