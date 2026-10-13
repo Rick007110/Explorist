@@ -6,6 +6,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::fs::jobs::{TransferKind, Work};
 use crate::fs::ops::{self, OpError};
 
 /// How many actions are remembered.
@@ -13,9 +14,34 @@ const LIMIT: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    Rename { from: PathBuf, to: PathBuf },
-    Create { path: PathBuf, is_dir: bool },
-    Trash { paths: Vec<PathBuf> },
+    Rename {
+        from: PathBuf,
+        to: PathBuf,
+    },
+    Create {
+        path: PathBuf,
+        is_dir: bool,
+    },
+    Trash {
+        paths: Vec<PathBuf>,
+    },
+    /// Copies made; undo sends them to the Recycle Bin.
+    Copy {
+        created: Vec<PathBuf>,
+    },
+    /// `(from, to)` moves; undo moves them back.
+    Move {
+        pairs: Vec<(PathBuf, PathBuf)>,
+    },
+}
+
+/// What undoing takes.
+#[derive(Debug)]
+pub enum Undo {
+    /// Done already, with the toast text or the error.
+    Done(Result<String, OpError>),
+    /// Needs a background job; the text is the toast for when it finishes.
+    Job(Work, String),
 }
 
 impl Action {
@@ -29,6 +55,37 @@ impl Action {
                 [one] => format!("Moved “{}” to the Recycle Bin", file_name(one)),
                 many => format!("Moved {} items to the Recycle Bin", many.len()),
             },
+            Self::Copy { created } => format!(
+                "Copied {}{}",
+                count(created.len()),
+                to_folder(created.first())
+            ),
+            Self::Move { pairs } => format!(
+                "Moved {}{}",
+                count(pairs.len()),
+                to_folder(pairs.first().map(|(_, to)| to))
+            ),
+        }
+    }
+
+    /// Starts undoing: right away for quick actions, or as a job.
+    pub fn begin_undo(&self) -> Undo {
+        match self {
+            Self::Copy { created } => Undo::Job(
+                Work::Trash(created.clone()),
+                format!("Removed the {}", plural(created.len(), "copy", "copies")),
+            ),
+            Self::Move { pairs } => Undo::Job(
+                Work::Transfer {
+                    kind: TransferKind::Move,
+                    pairs: pairs
+                        .iter()
+                        .map(|(from, to)| (to.clone(), from.clone()))
+                        .collect(),
+                },
+                format!("Moved {} back", count(pairs.len())),
+            ),
+            other => Undo::Done(other.undo()),
         }
     }
 
@@ -50,6 +107,9 @@ impl Action {
                     many => format!("Restored {} items", many.len()),
                 })
             }
+            Self::Copy { .. } | Self::Move { .. } => Err(OpError::Io(std::io::Error::other(
+                "this undo runs in the background",
+            ))),
         }
     }
 }
@@ -77,6 +137,25 @@ fn remove_if_untouched(path: &Path, is_dir: bool) -> Result<(), OpError> {
     Ok(())
 }
 
+fn count(n: usize) -> String {
+    plural(n, "item", "items")
+}
+
+fn plural(n: usize, one: &str, many: &str) -> String {
+    if n == 1 {
+        format!("1 {one}")
+    } else {
+        format!("{n} {many}")
+    }
+}
+
+/// " to “docs”", naming the folder something went into.
+fn to_folder(path: Option<&PathBuf>) -> String {
+    path.and_then(|p| p.parent())
+        .map(|dir| format!(" to “{}”", file_name(dir)))
+        .unwrap_or_default()
+}
+
 fn file_name(path: &Path) -> String {
     path.file_name()
         .unwrap_or(path.as_os_str())
@@ -101,12 +180,10 @@ impl UndoStack {
         !self.actions.is_empty()
     }
 
-    /// Undoes the most recent action. On failure the action is dropped, as
-    /// retrying would fail the same way.
-    pub fn undo(&mut self) -> Option<(Action, Result<String, OpError>)> {
-        let action = self.actions.pop()?;
-        let result = action.undo();
-        Some((action, result))
+    /// Takes the most recent action to undo. It's gone from the stack
+    /// whether or not undoing works, as retrying would fail the same way.
+    pub fn pop(&mut self) -> Option<Action> {
+        self.actions.pop()
     }
 }
 
@@ -126,7 +203,9 @@ mod tests {
             from: from.clone(),
             to: to.clone(),
         });
-        let (_, result) = stack.undo().unwrap();
+        let Undo::Done(result) = stack.pop().unwrap().begin_undo() else {
+            panic!("rename undoes right away");
+        };
         assert_eq!(result.unwrap(), "Name changed back to “a.txt”");
         assert!(from.exists());
         assert!(!to.exists());
@@ -192,7 +271,8 @@ mod tests {
             });
         }
         assert_eq!(stack.actions.len(), LIMIT);
-        let (action, result) = stack.undo().unwrap();
+        let action = stack.pop().unwrap();
+        let result = action.undo();
         assert_eq!(
             action,
             Action::Create {
@@ -202,6 +282,27 @@ mod tests {
         );
         assert!(result.is_err(), "path doesn't exist");
         assert_eq!(stack.actions.len(), LIMIT - 1);
+    }
+
+    #[test]
+    fn copy_and_move_undo_in_the_background() {
+        let copy = Action::Copy {
+            created: vec![PathBuf::from("dest/a.txt")],
+        };
+        assert!(
+            matches!(copy.begin_undo(), Undo::Job(Work::Trash(paths), _) if paths == [PathBuf::from("dest/a.txt")])
+        );
+
+        let moved = Action::Move {
+            pairs: vec![(PathBuf::from("a/x"), PathBuf::from("b/x"))],
+        };
+        let Undo::Job(Work::Transfer { kind, pairs }, message) = moved.begin_undo() else {
+            panic!("move undoes as a job");
+        };
+        assert_eq!(kind, TransferKind::Move);
+        assert_eq!(pairs, [(PathBuf::from("b/x"), PathBuf::from("a/x"))]);
+        assert_eq!(message, "Moved 1 item back");
+        assert_eq!(moved.done_message(), "Moved 1 item to “b”");
     }
 
     #[test]

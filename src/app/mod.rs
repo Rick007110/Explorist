@@ -2,6 +2,7 @@
 
 pub mod browser;
 pub mod commands;
+pub mod files;
 pub mod keymap;
 pub mod selection;
 pub mod undo;
@@ -27,6 +28,7 @@ use crate::ui::{self, fonts, theme::Palette};
 const TOAST_DWELL: Duration = Duration::from_secs(6);
 
 pub struct ExploristApp {
+    pub(crate) ctx: egui::Context,
     pub(crate) settings: Settings,
     settings_path: Option<PathBuf>,
     pub(crate) browser: Browser,
@@ -36,6 +38,8 @@ pub struct ExploristApp {
     pub(crate) palette: Palette,
     pub(crate) view: ViewState,
     undo: UndoStack,
+    /// The file operation in progress, if any.
+    pub(crate) job: Option<files::RunningJob>,
 }
 
 /// Transient UI state: what's open, being edited or shown.
@@ -56,6 +60,13 @@ pub struct ViewState {
     pub list_offset: f32,
     pub list_height: f32,
     pub maximized: bool,
+    /// Items cut to the clipboard, shown dimmed until pasted.
+    pub cut: std::collections::HashSet<PathBuf>,
+    /// Files are being dragged over the window from outside.
+    pub drop_hover: bool,
+    /// When Paste last ran from the keyboard, to paste once per press.
+    pub last_paste: Option<Instant>,
+    pub paste_detector: keymap::PasteDetector,
 }
 
 pub struct PathEdit {
@@ -128,6 +139,7 @@ impl ExploristApp {
 
         let palette = Palette::dark(settings.accent);
         let mut app = Self {
+            ctx: cc.egui_ctx.clone(),
             settings,
             settings_path,
             browser,
@@ -136,6 +148,7 @@ impl ExploristApp {
             palette,
             view: ViewState::default(),
             undo: UndoStack::default(),
+            job: None,
         };
         if let LoadOutcome::Invalid { error, .. } = outcome {
             app.toast_error(format!(
@@ -185,9 +198,36 @@ impl ExploristApp {
             return;
         }
         let typing = Self::typing(ctx);
-        let events = ctx.input(|i| i.events.clone());
+        let (events, mods) = ctx.input(|i| (i.events.clone(), Mods::from_egui(i.modifiers)));
         let mut consumed = Vec::new();
         for (index, event) in events.iter().enumerate() {
+            let swallowed_paste = self.view.paste_detector.feed(event);
+            let clip = if swallowed_paste {
+                Some(Command::Paste)
+            } else {
+                keymap::clipboard_event(event, mods)
+            };
+            if let Some(command) = clip {
+                // Text fields handle their own copy and paste.
+                if typing {
+                    continue;
+                }
+                consumed.push(index);
+                if command == Command::Paste {
+                    // A press can give both a Paste event and, on release, a
+                    // V key-up; paste once.
+                    let recent = self
+                        .view
+                        .last_paste
+                        .is_some_and(|t| t.elapsed() < Duration::from_millis(800));
+                    self.view.last_paste = Some(Instant::now());
+                    if recent {
+                        continue;
+                    }
+                }
+                self.run(ctx, command);
+                continue;
+            }
             match event {
                 egui::Event::Key {
                     key,
@@ -257,13 +297,11 @@ impl ExploristApp {
             Command::NewFolder => self.create(true),
             Command::NewFile => self.create(false),
             Command::Trash => self.trash_selection(),
+            Command::Cut => self.clip_selection(true),
+            Command::Copy => self.clip_selection(false),
+            Command::Paste => self.paste(),
             Command::DeletePermanently => {
-                let paths: Vec<PathBuf> = self
-                    .browser
-                    .selected_entries()
-                    .iter()
-                    .map(|e| e.path.clone())
-                    .collect();
+                let paths = self.selected_paths();
                 if !paths.is_empty() {
                     self.view.confirm_delete = Some(paths);
                 }
@@ -314,6 +352,8 @@ impl ExploristApp {
         }
         if self.browser.is_loading() {
             self.browser.cancel_loading();
+        } else if let Some(running) = &self.job {
+            running.job.cancel();
         } else if self.view.filter_open {
             self.view.filter_open = false;
             self.view.filter_text.clear();
@@ -471,88 +511,6 @@ impl ExploristApp {
         }
     }
 
-    fn trash_selection(&mut self) {
-        let paths: Vec<PathBuf> = self
-            .browser
-            .selected_entries()
-            .iter()
-            .map(|e| e.path.clone())
-            .collect();
-        if paths.is_empty() {
-            return;
-        }
-        let next_focus = self.row_after_removal(&paths);
-        match ops::move_to_trash(&paths) {
-            Ok(()) => {
-                self.browser.apply_change(&paths, Vec::new());
-                if let Some(next) = next_focus {
-                    self.browser.selection.select_only(&next);
-                }
-                let action = Action::Trash { paths };
-                self.toast(action.done_message(), true);
-                self.undo.push(action);
-            }
-            Err(err) => self.toast_error(err.to_string()),
-        }
-    }
-
-    pub(crate) fn delete_permanently(&mut self, paths: Vec<PathBuf>) {
-        let next_focus = self.row_after_removal(&paths);
-        let result = ops::delete_permanently(&paths);
-        // Some items may be gone even if a later one failed.
-        let gone: Vec<PathBuf> = paths.iter().filter(|p| !p.exists()).cloned().collect();
-        self.browser.apply_change(&gone, Vec::new());
-        if let Some(next) = next_focus {
-            self.browser.selection.select_only(&next);
-        }
-        match result {
-            Ok(()) => self.toast(
-                match gone.len() {
-                    1 => "Deleted 1 item".to_owned(),
-                    n => format!("Deleted {n} items"),
-                },
-                false,
-            ),
-            Err(err) => self.toast_error(format!("Couldn’t delete everything: {err}")),
-        }
-    }
-
-    /// The row to focus after `paths` disappear: the first one below them.
-    fn row_after_removal(&self, paths: &[PathBuf]) -> Option<PathBuf> {
-        let rows = self.browser.rows();
-        let last = (0..rows.len())
-            .rev()
-            .find(|&r| rows.get(r).is_some_and(|e| paths.contains(&e.path)))?;
-        (last + 1..rows.len())
-            .chain((0..last).rev())
-            .filter_map(|r| rows.get(r))
-            .find(|e| !paths.contains(&e.path))
-            .map(|e| e.path.clone())
-    }
-
-    pub(crate) fn undo(&mut self) {
-        let Some((action, result)) = self.undo.undo() else {
-            self.toast("Nothing to undo".to_owned(), false);
-            return;
-        };
-        match result {
-            Ok(message) => {
-                self.toast(message, false);
-                // Re-read first: refresh replaces any pending selection.
-                self.browser.refresh();
-                let reselect = match &action {
-                    Action::Rename { from, .. } => Some(from.clone()),
-                    Action::Trash { paths } => paths.first().cloned(),
-                    Action::Create { .. } => None,
-                };
-                if let Some(path) = reselect {
-                    self.browser.select_when_loaded(path);
-                }
-            }
-            Err(err) => self.toast_error(format!("Couldn’t undo: {err}")),
-        }
-    }
-
     fn current_palette(&self, ctx: &egui::Context) -> Palette {
         let dark = match self.settings.theme {
             Theme::Dark => true,
@@ -592,6 +550,8 @@ impl eframe::App for ExploristApp {
         self.view.maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
 
         self.browser.poll();
+        self.poll_job();
+        self.handle_dropped_files(&ctx);
         if let Some(wait) = self.browser.repaint_in() {
             ctx.request_repaint_after(wait);
         }

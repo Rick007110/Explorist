@@ -61,10 +61,36 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 }
             }
         });
+    if app.view.drop_hover {
+        drop_overlay(ui, &p, app.browser.location());
+    }
     let ctx = ui.ctx().clone();
     for command in commands {
         app.run(&ctx, command);
     }
+}
+
+/// Shown while files from outside are dragged over the window.
+fn drop_overlay(ui: &egui::Ui, p: &Palette, location: &Path) {
+    let rect = ui.ctx().content_rect().shrink(12.0);
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("drop"),
+    ));
+    painter.rect(
+        rect,
+        CornerRadius::same(radius::LG),
+        p.accent_alpha(if p.dark { 0.10 } else { 0.08 }),
+        Stroke::new(2.0, p.accent),
+        StrokeKind::Inside,
+    );
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        format!("Drop to copy into “{}”", folder_name(location)),
+        text::heading(),
+        p.text,
+    );
 }
 
 /// Splits a row into the Name, Size, Modified and Type cells.
@@ -264,7 +290,8 @@ fn draw_row(
     }
 
     let [name_cell, size_cell, mod_cell, type_cell] = columns(rect);
-    let dim = entry.hidden;
+    // Hidden items, and items cut to the clipboard, are drawn dimmed.
+    let dim = entry.hidden || app.view.cut.contains(&entry.path);
     let icon_color = if entry.is_dir {
         if dim { p.faint } else { p.accent }
     } else if selected {
@@ -451,7 +478,10 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
         Some((Command::Open, Command::Open.label())),
         Some((Command::OpenTerminal, Command::OpenTerminal.label())),
         None,
+        Some((Command::Cut, Command::Cut.label())),
+        Some((Command::Copy, Command::Copy.label())),
         Some((Command::CopyPath, Command::CopyPath.label())),
+        None,
         Some((Command::Rename, Command::Rename.label())),
         None,
         Some((Command::Trash, Command::Trash.label())),
@@ -476,6 +506,11 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
 fn background_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Command>) {
     let p = app.palette;
     menu::style(ui);
+    let can_paste = crate::fs::clipboard::read().is_some_and(|c| !c.paths.is_empty());
+    if menu::item(ui, &p, Command::Paste, can_paste) {
+        commands.push(Command::Paste);
+    }
+    menu::separator(ui, &p);
     for command in [Command::NewFolder, Command::NewFile] {
         if menu::item(ui, &p, command, true) {
             commands.push(command);

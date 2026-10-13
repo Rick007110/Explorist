@@ -81,6 +81,9 @@ const TABLE: &[(Mods, Key, Command)] = &[
     (Mods::NONE, Key::Delete, Command::Trash),
     (Mods::SHIFT, Key::Delete, Command::DeletePermanently),
     (Mods::CTRL_SHIFT, Key::C, Command::CopyPath),
+    (Mods::CTRL, Key::X, Command::Cut),
+    (Mods::CTRL, Key::C, Command::Copy),
+    (Mods::CTRL, Key::V, Command::Paste),
     (Mods::CTRL, Key::A, Command::SelectAll),
     (Mods::CTRL, Key::H, Command::ToggleHidden),
     (Mods::CTRL, Key::Z, Command::Undo),
@@ -118,6 +121,56 @@ pub fn lookup(mods: Mods, key: Key) -> Option<Command> {
         _ => return None,
     };
     Some(Command::Move(*target, mode))
+}
+
+/// egui-winit turns some shortcuts into clipboard events before the app
+/// sees them: Ctrl C/X/V (with or without Shift) and, on Windows, Shift Del
+/// and Ctrl/Shift Insert. This maps them back. `mods` is the modifier state
+/// at the time.
+///
+/// Ctrl V with only files on the clipboard (no text) produces no event at
+/// all; see [`PasteDetector`].
+pub fn clipboard_event(event: &egui::Event, mods: Mods) -> Option<Command> {
+    match event {
+        egui::Event::Copy if mods.shift => Some(Command::CopyPath),
+        egui::Event::Copy => Some(Command::Copy),
+        egui::Event::Cut if mods.shift && !mods.ctrl => Some(Command::DeletePermanently),
+        egui::Event::Cut => Some(Command::Cut),
+        egui::Event::Paste(_) => Some(Command::Paste),
+        _ => None,
+    }
+}
+
+/// Spots Ctrl V when egui-winit swallowed it. The press of a paste
+/// shortcut never reaches the app (it becomes a Paste event, or nothing if
+/// the clipboard holds no text), but the release of V does. A V release
+/// without a V press before it therefore means "paste". Modifiers can't be
+/// trusted at that point: Ctrl is often let go first.
+#[derive(Debug, Default)]
+pub struct PasteDetector {
+    v_down: bool,
+}
+
+impl PasteDetector {
+    /// Returns true when `event` completes a swallowed paste shortcut.
+    pub fn feed(&mut self, event: &egui::Event) -> bool {
+        match event {
+            egui::Event::Key {
+                key: Key::V,
+                pressed: true,
+                ..
+            } => {
+                self.v_down = true;
+                false
+            }
+            egui::Event::Key {
+                key: Key::V,
+                pressed: false,
+                ..
+            } => !std::mem::take(&mut self.v_down),
+            _ => false,
+        }
+    }
 }
 
 /// The shortcut shown next to a command in menus, as the design writes it:
@@ -200,6 +253,45 @@ mod tests {
                 "{m:?} {k:?} is bound twice"
             );
         }
+    }
+
+    #[test]
+    fn clipboard_events_map_back_to_commands() {
+        use egui::Event;
+        assert_eq!(
+            clipboard_event(&Event::Copy, Mods::CTRL),
+            Some(Command::Copy)
+        );
+        assert_eq!(
+            clipboard_event(&Event::Copy, Mods::CTRL_SHIFT),
+            Some(Command::CopyPath)
+        );
+        assert_eq!(clipboard_event(&Event::Cut, Mods::CTRL), Some(Command::Cut));
+        assert_eq!(
+            clipboard_event(&Event::Cut, Mods::SHIFT),
+            Some(Command::DeletePermanently)
+        );
+        assert_eq!(
+            clipboard_event(&Event::Paste("x".into()), Mods::CTRL),
+            Some(Command::Paste)
+        );
+    }
+
+    #[test]
+    fn swallowed_ctrl_v_is_spotted_on_release() {
+        let v = |pressed| egui::Event::Key {
+            key: Key::V,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut detector = PasteDetector::default();
+        // Typing a plain "v": press and release both arrive.
+        assert!(!detector.feed(&v(true)));
+        assert!(!detector.feed(&v(false)));
+        // Ctrl V: the press was swallowed, only the release arrives.
+        assert!(detector.feed(&v(false)));
     }
 
     #[test]
