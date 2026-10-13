@@ -1,5 +1,7 @@
 //! Application state and the top-level eframe app.
 
+pub mod selection;
+
 use crate::ui::fonts;
 
 pub struct ExploristApp {}
