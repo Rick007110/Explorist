@@ -8,4 +8,5 @@ pub mod format;
 pub mod kind;
 pub mod listing;
 pub mod ops;
+pub mod places;
 pub mod sort;
