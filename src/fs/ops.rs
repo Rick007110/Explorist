@@ -114,7 +114,7 @@ impl fmt::Display for OpError {
                 write!(f, "“{}” already exists", name.to_string_lossy())
             }
             Self::Io(err) => err.fmt(f),
-            Self::Trash(msg) => write!(f, "Couldn’t move to the Recycle Bin: {msg}"),
+            Self::Trash(msg) => write!(f, "Recycle Bin: {msg}"),
         }
     }
 }
@@ -206,6 +206,29 @@ pub fn unique_name(parent: &Path, base: &str, ext: &str) -> String {
 /// Moves items to the Recycle Bin.
 pub fn move_to_trash(paths: &[PathBuf]) -> Result<(), OpError> {
     trash::delete_all(paths).map_err(|err| OpError::Trash(err.to_string()))
+}
+
+/// Puts items moved to the Recycle Bin back where they were. When the bin
+/// holds several items from the same path, the most recently deleted wins.
+pub fn restore_from_trash(paths: &[PathBuf]) -> Result<(), OpError> {
+    let trashed = trash::os_limited::list().map_err(|err| OpError::Trash(err.to_string()))?;
+    let mut found = Vec::with_capacity(paths.len());
+    for path in paths {
+        let item = trashed
+            .iter()
+            .filter(|item| item.original_path() == *path)
+            .max_by_key(|item| item.time_deleted)
+            .ok_or_else(|| {
+                OpError::Trash(format!(
+                    "“{}” is no longer in the Recycle Bin",
+                    path.file_name()
+                        .unwrap_or(path.as_os_str())
+                        .to_string_lossy()
+                ))
+            })?;
+        found.push(item.clone());
+    }
+    trash::os_limited::restore_all(found).map_err(|err| OpError::Trash(err.to_string()))
 }
 
 /// Deletes items for good (Shift Del). Folders go with everything inside.
@@ -412,11 +435,13 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn move_to_trash_removes_the_file() {
+    fn trash_and_restore() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("explorist-trash-test.txt");
         fs::write(&file, b"").unwrap();
         move_to_trash(std::slice::from_ref(&file)).unwrap();
         assert!(!file.exists());
+        restore_from_trash(std::slice::from_ref(&file)).unwrap();
+        assert!(file.exists());
     }
 }
