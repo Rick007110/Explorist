@@ -8,7 +8,8 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("Explorist")
             .with_inner_size([1440.0, 900.0])
-            .with_min_inner_size([1280.0, 720.0]),
+            .with_min_inner_size([1280.0, 720.0])
+            .with_decorations(false),
         ..Default::default()
     };
 

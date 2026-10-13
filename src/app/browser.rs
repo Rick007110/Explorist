@@ -85,9 +85,15 @@ impl Browser {
         &self.filter
     }
 
-    /// Total items in the folder, before filtering.
+    /// Items in the folder, hidden ones included.
     pub fn total(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Items the name filter chooses from: everything but hidden items
+    /// while those are off. "3 of 12" counts against this.
+    pub fn shown_total(&self) -> usize {
+        self.entries.len() - self.view.hidden
     }
 
     /// Hidden items left out of the view.
@@ -231,6 +237,15 @@ impl Browser {
         }
     }
 
+    /// Selects `path` once the current read finishes, e.g. a file whose
+    /// folder was opened from the path bar.
+    pub fn select_when_loaded(&mut self, path: PathBuf) {
+        self.select_when_loaded = Some(path);
+        if !self.is_loading() {
+            self.apply_pending_selection();
+        }
+    }
+
     fn apply_pending_selection(&mut self) {
         let Some(path) = self.select_when_loaded.take() else {
             return;
@@ -338,6 +353,7 @@ mod tests {
         let b = browser(dir.path());
         assert_eq!(names(&b), ["docs", "src", "file2.txt", "file10.txt"]);
         assert_eq!(b.total(), 5);
+        assert_eq!(b.shown_total(), 4);
         assert_eq!(b.hidden_count(), 1);
         assert_eq!(
             b.load_state(),

@@ -1,0 +1,922 @@
+//! The main column: filter bar, column header, and the rows, or the empty,
+//! loading and error states.
+//!
+//! Only the rows on screen are laid out, so folders with 100,000 items
+//! scroll as smoothly as small ones.
+
+use std::path::Path;
+
+use egui::text::{CCursor, CCursorRange};
+use egui::{
+    Align2, Color32, CornerRadius, Frame, Key, Margin, Pos2, Rect, ScrollArea, Sense, Shape,
+    Stroke, StrokeKind, TextEdit, vec2,
+};
+
+use crate::app::ExploristApp;
+use crate::app::browser::LoadState;
+use crate::app::commands::Command;
+use crate::fs::listing::{ListError, ListErrorKind};
+use crate::fs::sort::{SortColumn, SortDirection};
+use crate::fs::{format, ops};
+use crate::ui::icons::{self, Icon};
+use crate::ui::menu;
+use crate::ui::theme::{Palette, radius, row_height, size, text};
+use crate::ui::widgets::{self, ButtonStyle};
+
+/// Horizontal margin around the header and rows.
+const SIDE: f32 = 8.0;
+const PAD_LEFT: f32 = 12.0;
+const PAD_RIGHT: f32 = 16.0;
+const ROW_GAP: f32 = 1.0;
+
+pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
+    let p = app.palette;
+    let mut commands = Vec::new();
+    egui::CentralPanel::default()
+        .frame(Frame::NONE.fill(p.bg_2))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+            if app.view.filter_open {
+                filter_bar(ui, app);
+            }
+            match app.browser.load_state().clone() {
+                LoadState::Failed(err) => error_state(ui, app, &err, &mut commands),
+                state => {
+                    let loading = matches!(state, LoadState::Loading { .. });
+                    header(ui, app);
+                    if loading {
+                        progress_line(ui, &p);
+                    }
+                    if app.browser.total() == 0 && loading {
+                        skeleton(ui, app);
+                    } else if app.browser.rows().is_empty() && !loading {
+                        if app.browser.filter().is_active() {
+                            no_matches(ui, app);
+                        } else {
+                            empty_state(ui, app, &mut commands);
+                        }
+                    } else {
+                        rows(ui, app, &mut commands);
+                    }
+                }
+            }
+        });
+    let ctx = ui.ctx().clone();
+    for command in commands {
+        app.run(&ctx, command);
+    }
+}
+
+/// Splits a row into the Name, Size, Modified and Type cells.
+fn columns(row: Rect) -> [Rect; 4] {
+    let inner = Rect::from_min_max(
+        Pos2::new(row.left() + PAD_LEFT, row.top()),
+        Pos2::new(row.right() - PAD_RIGHT, row.bottom()),
+    );
+    let ty_left = inner.right() - size::COL_TYPE;
+    let mod_left = ty_left - size::COL_GAP - size::COL_MODIFIED;
+    let size_left = mod_left - size::COL_GAP - size::COL_SIZE;
+    let name_right = (size_left - size::COL_GAP).max(inner.left());
+    let cell = |l: f32, r: f32| {
+        Rect::from_min_max(Pos2::new(l, inner.top()), Pos2::new(r, inner.bottom()))
+    };
+    [
+        cell(inner.left(), name_right),
+        cell(size_left, size_left + size::COL_SIZE),
+        cell(mod_left, mod_left + size::COL_MODIFIED),
+        cell(ty_left, inner.right()),
+    ]
+}
+
+fn header(ui: &mut egui::Ui, app: &mut ExploristApp) {
+    let p = app.palette;
+    let (full, _) = ui.allocate_exact_size(
+        vec2(ui.available_width(), size::COLUMN_HEADER),
+        Sense::hover(),
+    );
+    let rect = full.shrink2(vec2(SIDE, 0.0));
+    ui.painter().hline(
+        rect.x_range(),
+        rect.bottom() - 0.5,
+        Stroke::new(1.0, p.border_subtle),
+    );
+
+    let sort = app.browser.sort();
+    let cells = columns(rect);
+    let labels = [
+        ("Name", SortColumn::Name, Align2::LEFT_CENTER),
+        ("Size", SortColumn::Size, Align2::RIGHT_CENTER),
+        ("Modified", SortColumn::Modified, Align2::LEFT_CENTER),
+        ("Type", SortColumn::Type, Align2::LEFT_CENTER),
+    ];
+    for (cell, (label, column, align)) in cells.into_iter().zip(labels) {
+        let active = sort.column == column;
+        let font = if active {
+            text::label()
+        } else {
+            crate::ui::fonts::regular(12.0)
+        };
+        let response = ui.interact(cell, ui.id().with(("header", label)), Sense::click());
+        let color = if active || response.hovered() {
+            p.text_2
+        } else {
+            p.muted
+        };
+        let galley = ui.painter().layout_no_wrap(label.to_owned(), font, color);
+        let text_w = galley.size().x;
+        let arrow_w = if active { 16.0 } else { 0.0 };
+        let left = match align {
+            Align2::RIGHT_CENTER => cell.right() - text_w - arrow_w,
+            _ => cell.left(),
+        };
+        ui.painter().galley(
+            Pos2::new(left, cell.center().y - galley.size().y / 2.0),
+            galley,
+            color,
+        );
+        if active {
+            let icon = match sort.direction {
+                SortDirection::Ascending => Icon::SortUp,
+                SortDirection::Descending => Icon::SortDown,
+            };
+            let r = Rect::from_center_size(
+                Pos2::new(left + text_w + 4.0 + 6.0, cell.center().y),
+                vec2(12.0, 12.0),
+            );
+            icons::paint(ui.painter(), r, icon, 12.0, p.text_2);
+        }
+        if response.clicked() {
+            app.browser.sort_by(column);
+        }
+    }
+}
+
+/// While reading there's no total to measure against, so a short bar
+/// slides along the line.
+fn progress_line(ui: &mut egui::Ui, p: &Palette) {
+    let (full, _) = ui.allocate_exact_size(vec2(ui.available_width(), 2.0), Sense::hover());
+    let rect = full.shrink2(vec2(SIDE, 0.0));
+    ui.painter().rect_filled(rect, 0.0, p.scroll_track);
+    let t = ui.input(|i| i.time) as f32;
+    let width = rect.width() * 0.3;
+    let x = rect.left() + (t * 0.8).fract() * (rect.width() + width) - width;
+    let bar = Rect::from_min_max(
+        Pos2::new(x.max(rect.left()), rect.top()),
+        Pos2::new((x + width).min(rect.right()), rect.bottom()),
+    );
+    ui.painter().rect_filled(bar, 0.0, p.accent);
+    ui.ctx().request_repaint();
+}
+
+fn rows(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Command>) {
+    let row_h = row_height(app.settings.density);
+    let step = row_h + ROW_GAP;
+    let count = app.browser.rows().len();
+
+    let area = ui.available_rect_before_wrap();
+    // Clicks and right-clicks on empty space below the rows.
+    let background = ui.interact(area, ui.id().with("list-bg"), Sense::click());
+    if background.clicked() {
+        app.browser.select(|sel, _| sel.clear());
+        app.view.rename = None;
+    }
+    background.context_menu(|ui| background_menu(ui, app, commands));
+
+    let viewport_h = (area.height() - 12.0).max(row_h);
+    app.view.page_rows = ((viewport_h / step).floor() as usize).max(1);
+
+    let mut scroll = ScrollArea::vertical()
+        .id_salt("rows")
+        .auto_shrink([false, false]);
+    if std::mem::take(&mut app.view.scroll_to_focus)
+        && let Some(row) = app.browser.selection.focused_row(app.browser.rows())
+    {
+        let top = row as f32 * step;
+        let offset = app.view.list_offset;
+        let height = app.view.list_height.max(row_h);
+        if top < offset {
+            scroll = scroll.vertical_scroll_offset(top);
+        } else if top + row_h > offset + height {
+            scroll = scroll.vertical_scroll_offset(top + row_h - height);
+        }
+    }
+
+    let output = Frame::NONE
+        .inner_margin(Margin {
+            left: SIDE as i8,
+            right: SIDE as i8,
+            top: 4,
+            bottom: 8,
+        })
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = ROW_GAP;
+            scroll.show_rows(ui, row_h, count, |ui, range| {
+                for row in range {
+                    draw_row(ui, app, row, row_h, commands);
+                }
+            })
+        })
+        .inner;
+    app.view.list_offset = output.state.offset.y;
+    app.view.list_height = output.inner_rect.height();
+}
+
+fn draw_row(
+    ui: &mut egui::Ui,
+    app: &mut ExploristApp,
+    row: usize,
+    row_h: f32,
+    commands: &mut Vec<Command>,
+) {
+    let p = app.palette;
+    let Some(entry) = app.browser.rows().get(row).cloned() else {
+        return;
+    };
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+
+    let selected = app.browser.selection.is_selected(&entry.path);
+    let focused = app.browser.selection.is_focused(&entry.path);
+    let renaming = app
+        .view
+        .rename
+        .as_ref()
+        .is_some_and(|r| r.path == entry.path);
+    let fill = if selected || renaming {
+        p.selection()
+    } else if response.hovered() {
+        p.hover
+    } else {
+        Color32::TRANSPARENT
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(radius::SM), fill);
+    if focused {
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(radius::SM),
+            Stroke::new(1.0, p.focus_ring()),
+            StrokeKind::Inside,
+        );
+    }
+
+    let [name_cell, size_cell, mod_cell, type_cell] = columns(rect);
+    let dim = entry.hidden;
+    let icon_color = if entry.is_dir {
+        if dim { p.faint } else { p.accent }
+    } else if selected {
+        p.text
+    } else {
+        p.text_2
+    };
+    let icon_rect = Rect::from_min_size(
+        Pos2::new(name_cell.left(), rect.center().y - 8.0),
+        vec2(16.0, 16.0),
+    );
+    icons::paint(
+        painter,
+        icon_rect,
+        Icon::for_kind(entry.kind),
+        16.0,
+        icon_color,
+    );
+    let name_rect = Rect::from_min_max(
+        Pos2::new(icon_rect.right() + 10.0, rect.top()),
+        Pos2::new(name_cell.right(), rect.bottom()),
+    );
+
+    let meta = |s: String| (s, crate::ui::fonts::mono(12.0), p.text_2);
+    if renaming {
+        rename_field(
+            ui,
+            app,
+            name_rect,
+            Rect::from_min_max(size_cell.min, type_cell.max),
+            commands,
+        );
+    } else {
+        let font = if entry.is_dir && !dim {
+            text::body_medium()
+        } else {
+            text::body()
+        };
+        let color = if dim { p.muted } else { p.text };
+        let galley = widgets::truncated(ui, &entry.name, font, color, name_rect.width());
+        widgets::paint_aligned(ui.painter(), name_rect, galley, Align2::LEFT_CENTER, color);
+
+        let (size_text, f, c) = meta(entry.size.map_or_else(|| "—".to_owned(), format::size));
+        let g = ui.painter().layout_no_wrap(size_text, f, c);
+        widgets::paint_aligned(ui.painter(), size_cell, g, Align2::RIGHT_CENTER, c);
+        let (date, f, c) = meta(entry.modified.map(format::date).unwrap_or_default());
+        let g = ui.painter().layout_no_wrap(date, f, c);
+        widgets::paint_aligned(ui.painter(), mod_cell, g, Align2::LEFT_CENTER, c);
+        let g = widgets::truncated(
+            ui,
+            &entry.type_label,
+            crate::ui::fonts::regular(12.5),
+            p.muted,
+            type_cell.width(),
+        );
+        widgets::paint_aligned(ui.painter(), type_cell, g, Align2::LEFT_CENTER, p.muted);
+    }
+
+    // Selection.
+    if response.clicked() || response.secondary_clicked() {
+        if renaming {
+            return;
+        }
+        if app.view.rename.is_some() && !app.commit_rename() {
+            return;
+        }
+        let mods = ui.input(|i| i.modifiers);
+        if response.secondary_clicked() {
+            if !selected {
+                app.browser.select(|sel, rows| sel.click(rows, row));
+            }
+        } else if mods.shift {
+            app.browser
+                .select(|sel, rows| sel.extend_to(rows, row, mods.ctrl || mods.command));
+        } else if mods.ctrl || mods.command {
+            app.browser.select(|sel, rows| sel.toggle(rows, row));
+        } else {
+            app.browser.select(|sel, rows| sel.click(rows, row));
+        }
+    }
+    if response.double_clicked() && !renaming {
+        app.browser.select(|sel, rows| sel.click(rows, row));
+        commands.push(Command::Open);
+    }
+    response.context_menu(|ui| row_menu(ui, app, commands));
+}
+
+fn rename_field(
+    ui: &mut egui::Ui,
+    app: &mut ExploristApp,
+    rect: Rect,
+    error_area: Rect,
+    commands: &mut Vec<Command>,
+) {
+    let p = app.palette;
+    let Some(rename) = &mut app.view.rename else {
+        return;
+    };
+    let field = Rect::from_min_max(
+        Pos2::new(rect.left() - 4.0, rect.top() + 3.0),
+        Pos2::new(rect.right(), rect.bottom() - 3.0),
+    );
+    let bad = rename.error.is_some();
+    ui.painter().rect(
+        field,
+        CornerRadius::same(radius::XS),
+        p.surface,
+        Stroke::new(1.0, if bad { p.error } else { p.accent }),
+        StrokeKind::Inside,
+    );
+
+    // TextEdit lays out from the top, so give it a rect one line tall,
+    // centered in the field.
+    let inner = Rect::from_center_size(field.center(), vec2(field.width() - 8.0, 18.0));
+    let mut field_ui = ui.new_child(egui::UiBuilder::new().max_rect(inner));
+    let mut output = {
+        let ui = &mut field_ui;
+        TextEdit::singleline(&mut rename.text)
+            .font(text::body())
+            .text_color(p.text)
+            .frame(Frame::NONE)
+            .margin(Margin::ZERO)
+            .desired_width(inner.width())
+            .vertical_align(egui::Align::Center)
+            .show(ui)
+    };
+    let response = output.response.clone();
+
+    if rename.just_opened {
+        rename.just_opened = false;
+        response.request_focus();
+        let stem = ops::stem_range(&rename.text, rename.is_dir);
+        let start = rename.text[..stem.start].chars().count();
+        let end = rename.text[..stem.end].chars().count();
+        output.state.cursor.set_char_range(Some(CCursorRange::two(
+            CCursor::new(start),
+            CCursor::new(end),
+        )));
+        output.state.store(ui.ctx(), response.id);
+    }
+    if response.changed() {
+        rename.error = ops::validate_name(&rename.text)
+            .err()
+            .map(|e| e.to_string());
+    }
+    if let Some(err) = &rename.error {
+        let g = widgets::truncated(ui, err, text::caption(), p.error, error_area.width());
+        widgets::paint_aligned(ui.painter(), error_area, g, Align2::LEFT_CENTER, p.error);
+    }
+
+    let (enter, escape, tab) = ui.input(|i| {
+        (
+            i.key_pressed(Key::Enter),
+            i.key_pressed(Key::Escape),
+            i.key_pressed(Key::Tab),
+        )
+    });
+    if escape {
+        app.view.rename = None;
+    } else if response.lost_focus() {
+        if app.commit_rename() {
+            if tab {
+                // Tab moves on to renaming the next row.
+                commands.push(Command::Move(
+                    crate::app::commands::MoveTarget::Down,
+                    crate::app::selection::MoveMode::Replace,
+                ));
+                commands.push(Command::Rename);
+            }
+        } else if enter || tab {
+            response.request_focus();
+        } else {
+            // Clicked away with a bad name: give up, as Explorer does.
+            app.view.rename = None;
+        }
+    }
+}
+
+fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Command>) {
+    let p = app.palette;
+    menu::style(ui);
+    let many = app.browser.selection.count() > 1;
+    let items: &[Option<(Command, &str)>] = &[
+        Some((Command::Open, Command::Open.label())),
+        Some((Command::OpenTerminal, Command::OpenTerminal.label())),
+        None,
+        Some((Command::CopyPath, Command::CopyPath.label())),
+        Some((Command::Rename, Command::Rename.label())),
+        None,
+        Some((Command::Trash, Command::Trash.label())),
+        Some((
+            Command::DeletePermanently,
+            Command::DeletePermanently.label(),
+        )),
+    ];
+    for item in items {
+        match item {
+            Some((command, label)) => {
+                let enabled = !(many && *command == Command::Rename);
+                if menu::item_labeled(ui, &p, label, *command, enabled) {
+                    commands.push(*command);
+                }
+            }
+            None => menu::separator(ui, &p),
+        }
+    }
+}
+
+fn background_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Command>) {
+    let p = app.palette;
+    menu::style(ui);
+    for command in [Command::NewFolder, Command::NewFile] {
+        if menu::item(ui, &p, command, true) {
+            commands.push(command);
+        }
+    }
+    menu::separator(ui, &p);
+    let hidden_label = if app.browser.filter().show_hidden {
+        "Hide hidden files"
+    } else {
+        "Show hidden files"
+    };
+    if menu::item_labeled(ui, &p, hidden_label, Command::ToggleHidden, true) {
+        commands.push(Command::ToggleHidden);
+    }
+    for command in [Command::Refresh, Command::OpenTerminal, Command::CopyPath] {
+        let label = if command == Command::CopyPath {
+            "Copy folder path"
+        } else {
+            command.label()
+        };
+        if menu::item_labeled(ui, &p, label, command, true) {
+            commands.push(command);
+        }
+    }
+}
+
+fn filter_bar(ui: &mut egui::Ui, app: &mut ExploristApp) {
+    let p = app.palette;
+    let (bar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 50.0), Sense::hover());
+    ui.painter().hline(
+        bar.x_range(),
+        bar.bottom() - 0.5,
+        Stroke::new(1.0, p.border_subtle),
+    );
+
+    let input = Rect::from_min_size(
+        Pos2::new(bar.left() + 16.0, bar.center().y - 15.0),
+        vec2(240.0, 30.0),
+    );
+    ui.painter().rect(
+        input,
+        CornerRadius::same(radius::SM),
+        p.surface,
+        Stroke::new(1.0, p.accent),
+        StrokeKind::Inside,
+    );
+    ui.painter().rect_stroke(
+        input,
+        CornerRadius::same(radius::SM),
+        Stroke::new(3.0, p.accent_alpha(if p.dark { 0.22 } else { 0.18 })),
+        StrokeKind::Outside,
+    );
+    icons::paint(
+        ui.painter(),
+        Rect::from_min_size(
+            Pos2::new(input.left() + 10.0, input.center().y - 8.0),
+            vec2(16.0, 16.0),
+        ),
+        Icon::Filter,
+        16.0,
+        p.accent,
+    );
+    let kbd = widgets::kbd_galley(ui, &p, "Esc");
+    let kbd_left = input.right() - 6.0 - widgets::kbd_width(&kbd);
+    widgets::paint_kbd(ui.painter(), &p, kbd, kbd_left, input.center().y, false);
+
+    let field = Rect::from_min_max(
+        Pos2::new(input.left() + 34.0, input.center().y - 9.0),
+        Pos2::new(kbd_left - 6.0, input.center().y + 9.0),
+    );
+    let mut field_ui = ui.new_child(egui::UiBuilder::new().max_rect(field));
+    let output = {
+        let ui = &mut field_ui;
+        TextEdit::singleline(&mut app.view.filter_text)
+            .hint_text("Filter by name…")
+            .font(text::body())
+            .text_color(p.text)
+            .frame(Frame::NONE)
+            .margin(Margin::ZERO)
+            .desired_width(field.width())
+            .vertical_align(egui::Align::Center)
+            .show(ui)
+    };
+    let response = output.response;
+    if std::mem::take(&mut app.view.focus_filter) {
+        response.request_focus();
+    }
+    if response.changed() {
+        let query = app.view.filter_text.clone();
+        app.browser.set_filter_query(&query);
+    }
+    let (escape, enter, down) = ui.input(|i| {
+        (
+            i.key_pressed(Key::Escape),
+            i.key_pressed(Key::Enter),
+            i.key_pressed(Key::ArrowDown),
+        )
+    });
+    if response.lost_focus() && escape {
+        app.view.filter_open = false;
+        app.view.filter_text.clear();
+        app.browser.set_filter_query("");
+    } else if (response.lost_focus() && enter) || (response.has_focus() && down) {
+        // Hand the keyboard to the list, on the first match.
+        response.surrender_focus();
+        app.browser
+            .select(|sel, rows| sel.move_to(rows, 0, crate::app::selection::MoveMode::Replace));
+        app.view.scroll_to_focus = true;
+    }
+
+    // "3 of 14" and Clear on the right.
+    let clear_rect = Rect::from_min_size(
+        Pos2::new(bar.right() - 16.0 - 52.0, bar.center().y - 14.0),
+        vec2(52.0, 28.0),
+    );
+    let clear = ui.interact(clear_rect, ui.id().with("filter-clear"), Sense::click());
+    if clear.hovered() {
+        ui.painter()
+            .rect_filled(clear_rect, CornerRadius::same(radius::SM), p.hover);
+    }
+    ui.painter().text(
+        clear_rect.center(),
+        Align2::CENTER_CENTER,
+        "Clear",
+        crate::ui::fonts::medium(12.5),
+        p.text_2,
+    );
+    if clear.clicked() {
+        app.view.filter_text.clear();
+        app.browser.set_filter_query("");
+        app.view.focus_filter = true;
+    }
+    let counts = format!(
+        "{} of {}",
+        format::count(app.browser.rows().len() as u64),
+        format::count(app.browser.shown_total() as u64)
+    );
+    ui.painter().text(
+        Pos2::new(clear_rect.left() - 8.0, bar.center().y),
+        Align2::RIGHT_CENTER,
+        counts,
+        crate::ui::fonts::mono(12.0),
+        p.text_2,
+    );
+}
+
+fn skeleton(ui: &mut egui::Ui, app: &ExploristApp) {
+    const WIDTHS: [f32; 22] = [
+        62., 48., 71., 55., 40., 66., 58., 44., 69., 52., 61., 47., 73., 50., 64., 43., 57., 68.,
+        46., 60., 53., 70.,
+    ];
+    let p = app.palette;
+    let row_h = row_height(app.settings.density);
+    let area = ui.available_rect_before_wrap().shrink2(vec2(SIDE, 0.0));
+    // Opacity pulses 0.6 ↔ 1 every 1.4 s.
+    let t = ui.input(|i| i.time) as f32;
+    let pulse = 0.8 + 0.2 * (t * std::f32::consts::TAU / 1.4).cos();
+    ui.ctx().request_repaint();
+
+    let painter = ui.painter();
+    let mut y = area.top() + 4.0;
+    for (i, w) in WIDTHS.iter().enumerate() {
+        if y + row_h > area.bottom() {
+            break;
+        }
+        let rect = Rect::from_min_size(Pos2::new(area.left(), y), vec2(area.width(), row_h));
+        let fade = (1.0 - i as f32 * 0.035).max(0.25) * pulse;
+        let color = p.skeleton.gamma_multiply(fade);
+        let [name, size_c, date, ty] = columns(rect);
+        let bar = |l: f32, width: f32| {
+            Rect::from_min_size(Pos2::new(l, rect.center().y - 4.0), vec2(width, 8.0))
+        };
+        painter.rect_filled(
+            Rect::from_min_size(
+                Pos2::new(name.left(), rect.center().y - 7.0),
+                vec2(14.0, 14.0),
+            ),
+            CornerRadius::same(3),
+            color,
+        );
+        painter.rect_filled(
+            bar(name.left() + 24.0, (name.width() - 24.0) * w / 100.0),
+            CornerRadius::same(4),
+            color,
+        );
+        let sw = 36.0 + (i * 7 % 20) as f32;
+        painter.rect_filled(bar(size_c.right() - sw, sw), CornerRadius::same(4), color);
+        painter.rect_filled(bar(date.left(), 112.0), CornerRadius::same(4), color);
+        painter.rect_filled(
+            bar(ty.left(), 52.0 + (i * 11 % 30) as f32),
+            CornerRadius::same(4),
+            color,
+        );
+        y += row_h + ROW_GAP;
+    }
+}
+
+/// A centered block: icon tile, title, body text and whatever `extra` adds.
+fn centered_state(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: Icon,
+    tint: Option<Color32>,
+    title: &str,
+    body: &str,
+    extra: impl FnOnce(&mut egui::Ui),
+) {
+    let area = ui.available_rect_before_wrap();
+    let width = 440.0_f32.min(area.width() - 48.0);
+    // A child Ui, so the block doesn't push anything else around.
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_center_size(
+        area.center() - vec2(0.0, 40.0),
+        vec2(width, 320.0),
+    )));
+    child.vertical_centered(|ui| {
+        ui.spacing_mut().item_spacing.y = 14.0;
+        let (tile, _) = ui.allocate_exact_size(vec2(56.0, 56.0), Sense::hover());
+        match tint {
+            Some(color) => {
+                ui.painter().rect_filled(
+                    tile,
+                    CornerRadius::same(14),
+                    color.gamma_multiply(if p.dark { 0.14 } else { 0.10 }),
+                );
+                icons::paint(ui.painter(), tile, icon, 24.0, color);
+            }
+            None => {
+                dashed_rect(ui.painter(), tile, Stroke::new(1.0, p.border));
+                icons::paint(ui.painter(), tile, icon, 24.0, p.muted);
+            }
+        }
+        ui.label(
+            egui::RichText::new(title)
+                .font(text::heading())
+                .color(p.text),
+        );
+        ui.label(egui::RichText::new(body).font(text::body()).color(p.text_2));
+        extra(ui);
+    });
+}
+
+fn dashed_rect(painter: &egui::Painter, rect: Rect, stroke: Stroke) {
+    let r = rect.shrink(0.5);
+    let pts = [
+        r.left_top(),
+        r.right_top(),
+        r.right_bottom(),
+        r.left_bottom(),
+        r.left_top(),
+    ];
+    painter.extend(Shape::dashed_line(&pts, stroke, 4.0, 3.0));
+}
+
+fn empty_state(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Command>) {
+    let p = app.palette;
+    let hidden = app.browser.hidden_count();
+    centered_state(
+        ui,
+        &p,
+        Icon::Folder,
+        None,
+        "This folder is empty",
+        "Create a file or folder to get started.",
+        |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let file_w = widgets::button_width(
+                    ui,
+                    &p,
+                    "New file",
+                    ButtonStyle::Secondary,
+                    Some("Ctrl N"),
+                );
+                let folder_w = widgets::button_width(
+                    ui,
+                    &p,
+                    "New folder",
+                    ButtonStyle::Ghost,
+                    Some("Ctrl Shift N"),
+                );
+                ui.add_space(((ui.available_width() - file_w - folder_w - 8.0) / 2.0).max(0.0));
+                if widgets::button(ui, &p, "New file", ButtonStyle::Secondary, Some("Ctrl N"))
+                    .clicked()
+                {
+                    commands.push(Command::NewFile);
+                }
+                if widgets::button(
+                    ui,
+                    &p,
+                    "New folder",
+                    ButtonStyle::Ghost,
+                    Some("Ctrl Shift N"),
+                )
+                .clicked()
+                {
+                    commands.push(Command::NewFolder);
+                }
+            });
+            if hidden > 0 {
+                let label = match hidden {
+                    1 => "1 hidden item · Show hidden (Ctrl H)".to_owned(),
+                    n => format!("{n} hidden items · Show hidden (Ctrl H)"),
+                };
+                let link = ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(label)
+                            .font(crate::ui::fonts::regular(12.0))
+                            .color(p.muted)
+                            .underline(),
+                    )
+                    .sense(Sense::click()),
+                );
+                if link.clicked() {
+                    commands.push(Command::ToggleHidden);
+                }
+            }
+        },
+    );
+}
+
+fn no_matches(ui: &mut egui::Ui, app: &mut ExploristApp) {
+    let p = app.palette;
+    let query = app.browser.filter().query().to_owned();
+    centered_state(
+        ui,
+        &p,
+        Icon::Filter,
+        None,
+        "Nothing matches",
+        &format!("No names contain “{query}” in this folder."),
+        |_| {},
+    );
+}
+
+fn error_state(
+    ui: &mut egui::Ui,
+    app: &mut ExploristApp,
+    err: &ListError,
+    commands: &mut Vec<Command>,
+) {
+    let p = app.palette;
+    let name = folder_name(app.browser.location());
+    let (title, body) = match err.kind {
+        ListErrorKind::AccessDenied => (
+            "You don’t have access to this folder".to_owned(),
+            format!(
+                "Windows blocked reading “{name}”. It may be managed by the system or need administrator rights."
+            ),
+        ),
+        ListErrorKind::NotFound => (
+            "This folder doesn’t exist".to_owned(),
+            format!("“{name}” may have been moved, renamed or deleted."),
+        ),
+        ListErrorKind::NotAFolder => (
+            "That’s a file, not a folder".to_owned(),
+            format!("“{name}” can’t be opened as a folder."),
+        ),
+        ListErrorKind::Other => ("Couldn’t read this folder".to_owned(), err.message.clone()),
+    };
+    let code = error_code(err);
+    let details = format!(
+        "{}\n{}\n{}",
+        app.browser.location().display(),
+        err.message,
+        code
+    );
+    let can_back = app.browser.can_go_back();
+    let icon = if err.kind == ListErrorKind::AccessDenied {
+        Icon::Lock
+    } else {
+        Icon::Warning
+    };
+    centered_state(ui, &p, icon, Some(p.error), &title, &body, |ui| {
+        let chip = ui
+            .painter()
+            .layout_no_wrap(code.clone(), crate::ui::fonts::mono(11.5), p.muted);
+        let (rect, _) = ui.allocate_exact_size(chip.size() + vec2(16.0, 4.0), Sense::hover());
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(radius::XS), p.surface);
+        ui.painter()
+            .galley(rect.min + vec2(8.0, 2.0), chip, p.muted);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let mut total = widgets::button_width(ui, &p, "Try again", ButtonStyle::Primary, None);
+            if can_back {
+                total += 8.0
+                    + widgets::button_width(
+                        ui,
+                        &p,
+                        "Go back",
+                        ButtonStyle::Secondary,
+                        Some("Alt ←"),
+                    );
+            }
+            ui.add_space(((ui.available_width() - total) / 2.0).max(0.0));
+            if widgets::button(ui, &p, "Try again", ButtonStyle::Primary, None).clicked() {
+                commands.push(Command::Refresh);
+            }
+            if can_back
+                && widgets::button(ui, &p, "Go back", ButtonStyle::Secondary, Some("Alt ←"))
+                    .clicked()
+            {
+                commands.push(Command::GoBack);
+            }
+        });
+        let link = ui.add(
+            egui::Label::new(
+                egui::RichText::new("Copy error details")
+                    .font(crate::ui::fonts::regular(12.0))
+                    .color(p.muted)
+                    .underline(),
+            )
+            .sense(Sense::click()),
+        );
+        if link.clicked() {
+            ui.ctx().copy_text(details.clone());
+        }
+    });
+}
+
+fn folder_name(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// The Windows name for common error codes, as the design shows them.
+fn error_code(err: &ListError) -> String {
+    match err.os_code {
+        Some(code) if cfg!(windows) => {
+            let name = match code {
+                2 => "ERROR_FILE_NOT_FOUND",
+                3 => "ERROR_PATH_NOT_FOUND",
+                5 => "ERROR_ACCESS_DENIED",
+                21 => "ERROR_NOT_READY",
+                267 => "ERROR_DIRECTORY",
+                _ => "Error",
+            };
+            format!("{name} ({code})")
+        }
+        Some(code) => format!("os error {code}"),
+        None => "no error code".to_owned(),
+    }
+}
