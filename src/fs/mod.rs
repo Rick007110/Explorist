@@ -12,6 +12,7 @@ pub mod path_input;
 pub mod places;
 pub mod shell;
 pub mod sort;
+pub mod watch;
 
 /// Helpers shared by tests across modules.
 #[cfg(test)]

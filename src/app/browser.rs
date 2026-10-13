@@ -1,13 +1,20 @@
 //! The open folder: where we are, how we got here, and what's in it.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::app::selection::{self, Rows, Selection};
 use crate::fs::entry::Entry;
 use crate::fs::filter::{Filter, Filtered};
 use crate::fs::listing::{ListError, Listing, ListingEvent};
 use crate::fs::sort::{SortColumn, SortOrder};
+use crate::fs::watch::{Changes, FolderWatcher};
+
+/// Outside changes are applied once things have been quiet this long, so a
+/// burst (an unzip, a build) is handled in one go.
+const SETTLE: Duration = Duration::from_millis(200);
 
 /// Called from the reader thread when there's something new to show.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -41,6 +48,11 @@ pub struct Browser {
     /// Selected once it shows up, e.g. the folder we just went up out of.
     select_when_loaded: Option<PathBuf>,
     wake: Wake,
+    /// Reports changes made by other programs. `None` if the folder can't
+    /// be watched (some network drives).
+    watcher: Option<FolderWatcher>,
+    pending: Changes,
+    last_change: Option<Instant>,
 }
 
 impl Browser {
@@ -60,6 +72,9 @@ impl Browser {
             selection: Selection::default(),
             select_when_loaded: None,
             wake,
+            watcher: None,
+            pending: Changes::default(),
+            last_change: None,
         };
         browser.load(location);
         browser
@@ -194,6 +209,11 @@ impl Browser {
     }
 
     fn start_listing(&mut self, path: PathBuf) {
+        // Watch before reading so nothing slips through in between.
+        let wake = Arc::clone(&self.wake);
+        self.watcher = FolderWatcher::start(&path, move || wake()).ok();
+        self.pending = Changes::default();
+        self.last_change = None;
         let wake = Arc::clone(&self.wake);
         self.listing = Some(Listing::start(path.clone(), move || wake()));
         self.location = path;
@@ -202,8 +222,49 @@ impl Browser {
         self.load = LoadState::Loading { read: 0 };
     }
 
-    /// Takes in whatever the reader thread has sent. Call once per frame.
+    /// Takes in whatever the reader thread and the watcher have sent. Call
+    /// once per frame.
     pub fn poll(&mut self) {
+        self.poll_watcher();
+        self.poll_listing();
+    }
+
+    /// When the UI should look again for settled outside changes.
+    pub fn repaint_in(&self) -> Option<Duration> {
+        let last = self.last_change?;
+        Some(SETTLE.saturating_sub(last.elapsed()))
+    }
+
+    fn poll_watcher(&mut self) {
+        let Some(watcher) = &self.watcher else { return };
+        let fresh = watcher.poll();
+        if !fresh.is_empty() {
+            self.pending.paths.extend(fresh.paths);
+            self.pending.rescan |= fresh.rescan;
+            self.last_change = Some(Instant::now());
+        }
+        let settled = self.last_change.is_some_and(|t| t.elapsed() >= SETTLE);
+        if !settled || self.is_loading() {
+            return;
+        }
+        let changes = std::mem::take(&mut self.pending);
+        self.last_change = None;
+        if changes.rescan {
+            self.refresh();
+            return;
+        }
+        let mut removed = Vec::new();
+        let mut added = Vec::new();
+        for path in changes.paths {
+            match Entry::from_path(&path) {
+                Ok(entry) => added.push(entry),
+                Err(_) => removed.push(path),
+            }
+        }
+        self.apply_change(&removed, added);
+    }
+
+    fn poll_listing(&mut self) {
         let Some(listing) = &mut self.listing else {
             return;
         };
@@ -289,8 +350,17 @@ impl Browser {
     /// re-reading the folder: `removed` paths go, `added` entries come in
     /// (replacing any with the same path).
     pub fn apply_change(&mut self, removed: &[PathBuf], added: Vec<Entry>) {
+        if removed.is_empty() && added.is_empty() {
+            return;
+        }
+        let replaced: HashSet<&Path> = removed
+            .iter()
+            .map(PathBuf::as_path)
+            .chain(added.iter().map(|e| e.path.as_path()))
+            .collect();
         self.entries
-            .retain(|e| !removed.contains(&e.path) && !added.iter().any(|a| a.path == e.path));
+            .retain(|e| !replaced.contains(e.path.as_path()));
+        drop(replaced);
         self.entries.extend(added);
         self.resort();
     }
@@ -458,6 +528,27 @@ mod tests {
         let new = crate::fs::ops::rename(&old, "zzz.txt").unwrap();
         b.apply_change(&[old], vec![Entry::from_path(&new).unwrap()]);
         assert_eq!(names(&b), ["docs", "src", "file10.txt", "zzz.txt"]);
+    }
+
+    #[test]
+    fn outside_changes_show_up_without_refresh() {
+        let dir = tree();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let mut b = browser(&root);
+        fs::write(root.join("from-elsewhere.txt"), b"").unwrap();
+        fs::remove_file(root.join("file2.txt")).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            b.poll();
+            let n = names(&b);
+            if n.contains(&"from-elsewhere.txt".to_owned()) && !n.contains(&"file2.txt".to_owned())
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "changes never arrived: {n:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     #[test]

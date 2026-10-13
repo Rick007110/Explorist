@@ -592,6 +592,9 @@ impl eframe::App for ExploristApp {
         self.view.maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
 
         self.browser.poll();
+        if let Some(wait) = self.browser.repaint_in() {
+            ctx.request_repaint_after(wait);
+        }
         self.handle_keys(&ctx);
 
         ui::window::resize_handles(&ctx, self.view.maximized);
