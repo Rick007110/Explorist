@@ -1,5 +1,6 @@
 //! Application state and the top-level eframe app.
 
+pub mod browser;
 pub mod selection;
 pub mod undo;
 
