@@ -41,6 +41,9 @@ pub enum Command {
     /// Add the selected folder to Favorites.
     PinFolder,
     TogglePreview,
+    CommandPalette,
+    /// The palette, listing recent and favorite places.
+    RecentPlaces,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +87,8 @@ impl Command {
             Self::OpenSettings => "Settings",
             Self::PinFolder => "Pin to Favorites",
             Self::TogglePreview => "Toggle preview panel",
+            Self::CommandPalette => "Command palette",
+            Self::RecentPlaces => "Browse recent locations",
         }
     }
 
@@ -108,6 +113,8 @@ impl Command {
             Self::OpenTerminal => "open_terminal",
             Self::OpenSettings => "open_settings",
             Self::TogglePreview => "toggle_preview",
+            Self::CommandPalette => "command_palette",
+            Self::RecentPlaces => "recent_places",
             // Clipboard shortcuts are handled by the system layer, and
             // navigation keys are fixed.
             _ => return None,
@@ -115,7 +122,9 @@ impl Command {
     }
 
     /// Commands listed on the Keyboard settings page, in order.
-    pub const CUSTOMIZABLE: [Command; 17] = [
+    pub const CUSTOMIZABLE: [Command; 19] = [
+        Command::CommandPalette,
+        Command::RecentPlaces,
         Command::EditPath,
         Command::Filter,
         Command::Rename,
@@ -135,6 +144,49 @@ impl Command {
         Command::OpenSettings,
     ];
 
+    /// Commands offered in the palette, in order of usefulness.
+    pub const PALETTE: [Command; 24] = [
+        Command::Open,
+        Command::Rename,
+        Command::NewFile,
+        Command::NewFolder,
+        Command::Copy,
+        Command::Cut,
+        Command::Paste,
+        Command::CopyPath,
+        Command::Trash,
+        Command::DeletePermanently,
+        Command::Undo,
+        Command::SelectAll,
+        Command::Filter,
+        Command::EditPath,
+        Command::ToggleHidden,
+        Command::TogglePreview,
+        Command::Refresh,
+        Command::GoBack,
+        Command::GoForward,
+        Command::GoUp,
+        Command::OpenTerminal,
+        Command::PinFolder,
+        Command::RecentPlaces,
+        Command::OpenSettings,
+    ];
+
+    /// Whether the command works on the selection, so the palette hides
+    /// it when nothing is selected.
+    pub fn needs_selection(self) -> bool {
+        matches!(
+            self,
+            Self::Open
+                | Self::Rename
+                | Self::Copy
+                | Self::Cut
+                | Self::Trash
+                | Self::DeletePermanently
+                | Self::PinFolder
+        )
+    }
+
     pub fn from_id(id: &str) -> Option<Command> {
         Self::CUSTOMIZABLE.into_iter().find(|c| c.id() == Some(id))
     }
@@ -152,6 +204,8 @@ impl Command {
                 | Self::Filter
                 | Self::ToggleHidden
                 | Self::TogglePreview
+                | Self::CommandPalette
+                | Self::RecentPlaces
                 | Self::JumpToPlace(_)
         )
     }

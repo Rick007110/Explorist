@@ -3,6 +3,7 @@
 pub mod browser;
 pub mod commands;
 pub mod files;
+pub mod fuzzy;
 pub mod keymap;
 pub mod selection;
 pub mod undo;
@@ -42,6 +43,8 @@ pub struct ExploristApp {
     /// The file operation in progress, if any.
     pub(crate) job: Option<files::RunningJob>,
     pub(crate) preview: crate::fs::preview::Loader,
+    /// Folders visited, most recent first, for the palette.
+    pub(crate) recent: Vec<PathBuf>,
     pub(crate) preview_image: Option<ui::preview::PreviewImage>,
 }
 
@@ -70,6 +73,7 @@ pub struct ViewState {
     /// The Settings page is showing instead of the folder.
     pub settings_open: bool,
     pub settings: crate::ui::settings::SettingsState,
+    pub palette: Option<crate::ui::palette::PaletteState>,
     /// The folder shown last frame, to notice navigation.
     pub last_location: PathBuf,
     /// When Paste last ran from the keyboard, to paste once per press.
@@ -165,6 +169,7 @@ impl ExploristApp {
             job: None,
             preview: Default::default(),
             preview_image: None,
+            recent: Vec::new(),
         };
         if let LoadOutcome::Invalid { error, .. } = outcome {
             app.toast_error(format!(
@@ -251,7 +256,8 @@ impl ExploristApp {
     /// Turns key presses into commands. Runs before the UI is drawn so
     /// shortcuts win over widgets that would otherwise react to the keys.
     fn handle_keys(&mut self, ctx: &egui::Context) {
-        if self.view.confirm_delete.is_some() {
+        // Dialogs and the palette handle their own keys.
+        if self.view.confirm_delete.is_some() || self.view.palette.is_some() {
             return;
         }
         if let Some(command) = self.view.settings.recording {
@@ -447,6 +453,12 @@ impl ExploristApp {
             Command::Move(target, mode) => self.move_focus(target, mode),
             Command::ToggleFocused => self.browser.select(|sel, rows| sel.toggle_focused(rows)),
             Command::OpenSettings => self.view.settings_open = true,
+            Command::CommandPalette => {
+                self.view.palette = Some(crate::ui::palette::PaletteState::new(""));
+            }
+            Command::RecentPlaces => {
+                self.view.palette = Some(crate::ui::palette::PaletteState::new("@"));
+            }
             Command::TogglePreview => {
                 self.settings.show_preview = !self.settings.show_preview;
                 self.save_settings();
@@ -682,6 +694,10 @@ impl eframe::App for ExploristApp {
         if self.view.last_location != self.browser.location() {
             // Each folder opens with its own remembered sort.
             self.view.last_location = self.browser.location().to_path_buf();
+            let here = self.view.last_location.clone();
+            self.recent.retain(|p| *p != here);
+            self.recent.insert(0, here);
+            self.recent.truncate(20);
             let sort = self.settings.sort_for(&self.view.last_location);
             if sort != self.browser.sort() {
                 self.browser.set_sort(sort);
@@ -711,6 +727,7 @@ impl eframe::App for ExploristApp {
         let toast_hovered = ui::toast::show(&ctx, self);
         self.expire_toast(&ctx, toast_hovered);
         ui::dialogs::confirm_delete(&ctx, self);
+        ui::palette::show(&ctx, self);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
