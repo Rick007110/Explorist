@@ -13,3 +13,6 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[dev-dependencies]
+tempfile = "3"
