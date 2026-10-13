@@ -43,6 +43,9 @@ pub struct Palette {
     pub kbd_border: Color32,
     /// Dims everything behind a dialog.
     pub scrim: Color32,
+    /// Text in code previews, and string literals in them.
+    pub code_text: Color32,
+    pub code_string: Color32,
 }
 
 const fn hex(rgb: u32) -> Color32 {
@@ -77,6 +80,8 @@ impl Palette {
             skeleton: hex(0x22262D),
             kbd_border: hex(0x353B44),
             scrim: Color32::from_rgba_unmultiplied(6, 7, 9, 140),
+            code_text: hex(0xC9CED6),
+            code_string: hex(0xD8C08C),
         }
     }
 
@@ -107,6 +112,8 @@ impl Palette {
             skeleton: hex(0xECEEF1),
             kbd_border: hex(0xD0D5DB),
             scrim: Color32::from_rgba_unmultiplied(20, 24, 30, 71),
+            code_text: hex(0x2A2F36),
+            code_string: hex(0x8A5A00),
         }
     }
 
@@ -170,6 +177,7 @@ pub mod size {
     pub const STATUS_BAR: f32 = 28.0;
     pub const SIDEBAR: f32 = 224.0;
     pub const PREVIEW: f32 = 320.0;
+    pub const PREVIEW_HEADER: f32 = 44.0;
     pub const ICON: f32 = 16.0;
     pub const ICON_STROKE: f32 = 1.5;
     pub const BUTTON: f32 = 32.0;

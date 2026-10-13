@@ -38,6 +38,7 @@ pub enum Icon {
     SortDown,
     Check,
     Warning,
+    PreviewPanel,
     // Places
     Home,
     Desktop,
@@ -307,6 +308,10 @@ fn draw(mut pen: Pen<'_>, icon: Icon) {
             pen.line(&[(4.0, 8.7), (8.0, 12.7), (12.0, 8.7)]);
         }
         Icon::Check => pen.line(&[(3.5, 8.5), (6.5, 11.5), (12.5, 4.5)]),
+        Icon::PreviewPanel => {
+            pen.rect(2.0, 2.5, 12.0, 11.0, 1.5);
+            pen.line(&[(10.0, 2.5), (10.0, 13.5)]);
+        }
         Icon::Warning => {
             pen.closed(&[(8.0, 2.5), (14.0, 13.0), (2.0, 13.0)]);
             pen.line(&[(8.0, 6.5), (8.0, 9.5)]);

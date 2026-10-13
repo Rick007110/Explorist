@@ -96,6 +96,7 @@ const TABLE: &[(Mods, Key, Command)] = &[
     (Mods::NONE, Key::Escape, Command::Escape),
     (Mods::CTRL, Key::Space, Command::ToggleFocused),
     (Mods::CTRL, Key::Comma, Command::OpenSettings),
+    (Mods::CTRL, Key::Period, Command::TogglePreview),
 ];
 
 /// Arrow-style keys, each in three flavors: plain moves the selection,
@@ -236,8 +237,9 @@ pub fn shortcut_label(command: Command) -> Option<String> {
 }
 
 /// Short display names for keys whose egui name is long or unclear.
-const KEY_NAMES: [(Key, &str); 8] = [
+const KEY_NAMES: [(Key, &str); 9] = [
     (Key::Comma, ","),
+    (Key::Period, "."),
     (Key::Delete, "Del"),
     (Key::Escape, "Esc"),
     (Key::Backtick, "`"),

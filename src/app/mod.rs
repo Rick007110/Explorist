@@ -41,6 +41,8 @@ pub struct ExploristApp {
     undo: UndoStack,
     /// The file operation in progress, if any.
     pub(crate) job: Option<files::RunningJob>,
+    pub(crate) preview: crate::fs::preview::Loader,
+    pub(crate) preview_image: Option<ui::preview::PreviewImage>,
 }
 
 /// Transient UI state: what's open, being edited or shown.
@@ -161,6 +163,8 @@ impl ExploristApp {
             view: ViewState::default(),
             undo: UndoStack::default(),
             job: None,
+            preview: Default::default(),
+            preview_image: None,
         };
         if let LoadOutcome::Invalid { error, .. } = outcome {
             app.toast_error(format!(
@@ -443,6 +447,10 @@ impl ExploristApp {
             Command::Move(target, mode) => self.move_focus(target, mode),
             Command::ToggleFocused => self.browser.select(|sel, rows| sel.toggle_focused(rows)),
             Command::OpenSettings => self.view.settings_open = true,
+            Command::TogglePreview => {
+                self.settings.show_preview = !self.settings.show_preview;
+                self.save_settings();
+            }
             Command::PinFolder => {
                 let folders: Vec<PathBuf> = self
                     .browser
@@ -694,6 +702,9 @@ impl eframe::App for ExploristApp {
             ui::toolbar::show(ui, self);
             ui::status_bar::show(ui, self);
             ui::sidebar::show(ui, self);
+            if self.settings.show_preview {
+                ui::preview::show(ui, self);
+            }
             ui::file_list::show(ui, self);
         }
 

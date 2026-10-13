@@ -37,6 +37,8 @@ pub struct Settings {
     pub folder_sorts: BTreeMap<String, FolderSort>,
     /// Custom shortcuts: command id → "Ctrl Shift N".
     pub shortcuts: BTreeMap<String, String>,
+    /// The preview panel is open (Ctrl .).
+    pub show_preview: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -69,6 +71,7 @@ impl Default for Settings {
             date_format: DateFormat::Iso,
             folder_sorts: BTreeMap::new(),
             shortcuts: BTreeMap::new(),
+            show_preview: true,
         }
     }
 }
@@ -267,6 +270,7 @@ mod tests {
                 },
             )]),
             shortcuts: BTreeMap::from([("rename".to_owned(), "Ctrl R".to_owned())]),
+            show_preview: false,
         };
         settings.save(&path).unwrap();
         assert!(!path.with_extension("toml.tmp").exists());

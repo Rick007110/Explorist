@@ -125,7 +125,6 @@ pub struct Loader {
     pending: Option<Receiver<(PathBuf, Content)>>,
 }
 
-
 impl Loader {
     /// Asks for `path`'s preview, unless it's already loaded or loading.
     pub fn request(

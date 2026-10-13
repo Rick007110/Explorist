@@ -40,6 +40,7 @@ pub enum Command {
     OpenSettings,
     /// Add the selected folder to Favorites.
     PinFolder,
+    TogglePreview,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +83,7 @@ impl Command {
             Self::ToggleFocused => "Toggle selection",
             Self::OpenSettings => "Settings",
             Self::PinFolder => "Pin to Favorites",
+            Self::TogglePreview => "Toggle preview panel",
         }
     }
 
@@ -105,6 +107,7 @@ impl Command {
             Self::Undo => "undo",
             Self::OpenTerminal => "open_terminal",
             Self::OpenSettings => "open_settings",
+            Self::TogglePreview => "toggle_preview",
             // Clipboard shortcuts are handled by the system layer, and
             // navigation keys are fixed.
             _ => return None,
@@ -112,7 +115,7 @@ impl Command {
     }
 
     /// Commands listed on the Keyboard settings page, in order.
-    pub const CUSTOMIZABLE: [Command; 16] = [
+    pub const CUSTOMIZABLE: [Command; 17] = [
         Command::EditPath,
         Command::Filter,
         Command::Rename,
@@ -128,6 +131,7 @@ impl Command {
         Command::Refresh,
         Command::Open,
         Command::OpenTerminal,
+        Command::TogglePreview,
         Command::OpenSettings,
     ];
 
@@ -147,6 +151,7 @@ impl Command {
                 | Self::EditPath
                 | Self::Filter
                 | Self::ToggleHidden
+                | Self::TogglePreview
                 | Self::JumpToPlace(_)
         )
     }
