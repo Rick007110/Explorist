@@ -28,7 +28,7 @@ jobs:
             # Surface failures as annotations so they show without the full
             # log. GitHub keeps at most 10 per step, so list names in one.
             echo "::error::Failed: $(grep -oE '^test [^ ]+ \.\.\. FAILED' test-output.txt | cut -d' ' -f2 | tr '\n' ' ')"
-            grep -E "panicked|left:|right:|error\[" test-output.txt | head -9 |
+            grep -A1 -E "panicked|left:|right:|error\[" test-output.txt | grep -v "^--" | head -9 |
               while IFS= read -r line; do echo "::error::$line"; done
             exit 1
           }

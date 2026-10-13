@@ -216,34 +216,45 @@ pub fn restore_from_trash(paths: &[PathBuf]) -> Result<(), OpError> {
     let trashed = trash::os_limited::list().map_err(|err| OpError::Trash(err.to_string()))?;
     let mut found = Vec::with_capacity(paths.len());
     for path in paths {
-        let wanted = comparable(path);
-        let item = trashed
+        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+            continue;
+        };
+        let parent = comparable(parent);
+        let name = name.to_string_lossy();
+        // Windows reports names as Explorer shows them, so with "hide
+        // extensions for known file types" on, "notes.txt" comes back as
+        // "notes". Accept either.
+        let stem = path.file_stem().map(|s| s.to_string_lossy());
+        let mut item = trashed
             .iter()
-            .filter(|item| comparable(&item.original_path()) == wanted)
+            .filter(|item| comparable(&item.original_parent) == parent)
+            .filter(|item| {
+                let listed = item.name.to_string_lossy();
+                same_name(&listed, &name) || stem.as_deref().is_some_and(|s| same_name(&listed, s))
+            })
             .max_by_key(|item| item.time_deleted)
-            .ok_or_else(|| {
-                OpError::Trash(format!(
-                    "“{}” is no longer in the Recycle Bin",
-                    path.file_name()
-                        .unwrap_or(path.as_os_str())
-                        .to_string_lossy()
-                ))
-            })?;
-        found.push(item.clone());
+            .ok_or_else(|| OpError::Trash(format!("“{name}” is no longer in the Recycle Bin")))?
+            .clone();
+        // Restore under the real name, extension included.
+        item.name = path.file_name().unwrap_or_default().to_os_string();
+        found.push(item);
     }
     trash::os_limited::restore_all(found).map_err(|err| OpError::Trash(err.to_string()))
 }
 
-/// A form of `path` that compares equal however it was spelled: the same
-/// folder can appear as `C:\Users\RUNNER~1` or `C:\Users\runneradmin`, in
-/// any case. The item itself is gone, so only its parent is resolved.
-fn comparable(path: &Path) -> PathBuf {
-    let resolved = match (path.parent(), path.file_name()) {
-        (Some(parent), Some(name)) => fs::canonicalize(parent)
-            .map(|p| p.join(name))
-            .unwrap_or_else(|_| path.to_path_buf()),
-        _ => path.to_path_buf(),
-    };
+fn same_name(a: &str, b: &str) -> bool {
+    if cfg!(windows) {
+        a.to_lowercase() == b.to_lowercase()
+    } else {
+        a == b
+    }
+}
+
+/// A form of a folder path that compares equal however it was spelled: the
+/// same folder can appear as `C:\Users\RUNNER~1` or `C:\Users\runneradmin`,
+/// in any case.
+fn comparable(dir: &Path) -> PathBuf {
+    let resolved = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
     if cfg!(windows) {
         PathBuf::from(resolved.to_string_lossy().to_lowercase())
     } else {
@@ -453,7 +464,7 @@ mod tests {
         ));
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     #[test]
     fn trash_and_restore() {
         let dir = tempfile::tempdir().unwrap();
