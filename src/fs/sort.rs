@@ -4,9 +4,12 @@ use std::cmp::Ordering;
 use std::iter::Peekable;
 use std::str::Chars;
 
+use serde::{Deserialize, Serialize};
+
 use super::entry::Entry;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SortColumn {
     #[default]
     Name,
@@ -15,7 +18,8 @@ pub enum SortColumn {
     Type,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SortDirection {
     #[default]
     Ascending,
@@ -32,7 +36,8 @@ impl SortDirection {
 }
 
 /// How the file list is ordered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SortOrder {
     pub column: SortColumn,
     pub direction: SortDirection,

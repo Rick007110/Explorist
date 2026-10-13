@@ -11,6 +11,8 @@ egui = "0.36"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 trash = "5"
 dirs = "7"
+serde = { version = "1", features = ["derive"] }
+toml = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
