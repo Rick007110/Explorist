@@ -6,4 +6,5 @@ pub mod entry;
 pub mod filter;
 pub mod format;
 pub mod kind;
+pub mod listing;
 pub mod sort;
