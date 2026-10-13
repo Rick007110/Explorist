@@ -5,3 +5,4 @@
 pub mod entry;
 pub mod format;
 pub mod kind;
+pub mod sort;
