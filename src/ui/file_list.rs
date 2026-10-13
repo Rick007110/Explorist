@@ -497,6 +497,7 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
         Some((Command::CopyPath, Command::CopyPath.label())),
         None,
         Some((Command::Rename, Command::Rename.label())),
+        Some((Command::BatchRename, Command::BatchRename.label())),
         Some((Command::PinFolder, Command::PinFolder.label())),
         None,
         Some((Command::Trash, Command::Trash.label())),

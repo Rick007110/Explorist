@@ -371,3 +371,74 @@ pub fn swatch(ui: &mut Ui, palette: &Palette, color: Color32, chosen: bool, labe
     }
     response.on_hover_text(label).clicked()
 }
+
+/// A framed one-line text field `width` wide and 32 tall, with the
+/// design's accent border and glow while focused.
+pub fn text_field(
+    ui: &mut Ui,
+    palette: &Palette,
+    text: &mut String,
+    width: f32,
+    mono: bool,
+    hint: &str,
+) -> Response {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, 32.0), Sense::hover());
+    // Reserve the background's place so it's drawn under the text, then
+    // fill it in once we know whether the field has focus.
+    let background = ui.painter().add(egui::Shape::Noop);
+    let inner = Rect::from_center_size(rect.center(), vec2(rect.width() - 20.0, 18.0));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
+    let font = if mono {
+        crate::ui::fonts::mono(13.0)
+    } else {
+        text::body()
+    };
+    let response = child.add(
+        egui::TextEdit::singleline(text)
+            .hint_text(hint)
+            .font(font)
+            .text_color(palette.text)
+            .frame(egui::Frame::NONE)
+            .margin(egui::Margin::ZERO)
+            .desired_width(inner.width()),
+    );
+    let focused = response.has_focus();
+    ui.painter().set(
+        background,
+        egui::Shape::Rect(egui::epaint::RectShape::new(
+            rect,
+            CornerRadius::same(radius::SM),
+            palette.bg_2,
+            Stroke::new(
+                1.0,
+                if focused {
+                    palette.accent
+                } else {
+                    palette.border
+                },
+            ),
+            StrokeKind::Inside,
+        )),
+    );
+    if focused {
+        ui.painter().rect_stroke(
+            rect,
+            CornerRadius::same(radius::SM),
+            Stroke::new(
+                3.0,
+                palette.accent_alpha(if palette.dark { 0.22 } else { 0.18 }),
+            ),
+            StrokeKind::Outside,
+        );
+    }
+    response
+}
+
+/// A small label above a field.
+pub fn field_label(ui: &mut Ui, palette: &Palette, label: &str) {
+    ui.label(
+        egui::RichText::new(label)
+            .font(crate::ui::fonts::medium(12.0))
+            .color(palette.text_2),
+    );
+}

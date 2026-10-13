@@ -74,6 +74,7 @@ pub struct ViewState {
     pub settings_open: bool,
     pub settings: crate::ui::settings::SettingsState,
     pub palette: Option<crate::ui::palette::PaletteState>,
+    pub batch: Option<crate::ui::batch_rename::BatchState>,
     /// The folder shown last frame, to notice navigation.
     pub last_location: PathBuf,
     /// When Paste last ran from the keyboard, to paste once per press.
@@ -230,6 +231,10 @@ impl ExploristApp {
         self.save_settings();
     }
 
+    pub(crate) fn push_undo(&mut self, action: Action) {
+        self.undo.push(action);
+    }
+
     pub(crate) fn toast(&mut self, message: String, undo: bool) {
         self.view.toast = Some(Toast {
             message,
@@ -257,7 +262,10 @@ impl ExploristApp {
     /// shortcuts win over widgets that would otherwise react to the keys.
     fn handle_keys(&mut self, ctx: &egui::Context) {
         // Dialogs and the palette handle their own keys.
-        if self.view.confirm_delete.is_some() || self.view.palette.is_some() {
+        if self.view.confirm_delete.is_some()
+            || self.view.palette.is_some()
+            || self.view.batch.is_some()
+        {
             return;
         }
         if let Some(command) = self.view.settings.recording {
@@ -453,6 +461,7 @@ impl ExploristApp {
             Command::Move(target, mode) => self.move_focus(target, mode),
             Command::ToggleFocused => self.browser.select(|sel, rows| sel.toggle_focused(rows)),
             Command::OpenSettings => self.view.settings_open = true,
+            Command::BatchRename => self.open_batch_rename(),
             Command::CommandPalette => {
                 self.view.palette = Some(crate::ui::palette::PaletteState::new(""));
             }
@@ -728,6 +737,7 @@ impl eframe::App for ExploristApp {
         self.expire_toast(&ctx, toast_hovered);
         ui::dialogs::confirm_delete(&ctx, self);
         ui::palette::show(&ctx, self);
+        ui::batch_rename::show(&ctx, self);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

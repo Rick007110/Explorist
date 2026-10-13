@@ -25,6 +25,10 @@ pub enum Action {
     Trash {
         paths: Vec<PathBuf>,
     },
+    /// `(old path, new path)` renames done in one batch.
+    BatchRename {
+        pairs: Vec<(PathBuf, PathBuf)>,
+    },
     /// Copies made; undo sends them to the Recycle Bin.
     Copy {
         created: Vec<PathBuf>,
@@ -60,6 +64,7 @@ impl Action {
                 count(created.len()),
                 to_folder(created.first())
             ),
+            Self::BatchRename { pairs } => format!("Renamed {}", count(pairs.len())),
             Self::Move { pairs } => format!(
                 "Moved {}{}",
                 count(pairs.len()),
@@ -106,6 +111,23 @@ impl Action {
                     [one] => format!("Restored “{}”", file_name(one)),
                     many => format!("Restored {} items", many.len()),
                 })
+            }
+            Self::BatchRename { pairs } => {
+                let back: Vec<(PathBuf, String)> = pairs
+                    .iter()
+                    .map(|(old, new)| (new.clone(), file_name(old)))
+                    .collect();
+                let outcome = crate::fs::batch::rename_all(&back);
+                match outcome.failed.first() {
+                    None => Ok(format!(
+                        "Names changed back for {}",
+                        count(outcome.done.len())
+                    )),
+                    Some((path, err)) => Err(OpError::Io(std::io::Error::other(format!(
+                        "“{}”: {err}",
+                        file_name(path)
+                    )))),
+                }
             }
             Self::Copy { .. } | Self::Move { .. } => Err(OpError::Io(std::io::Error::other(
                 "this undo runs in the background",
@@ -303,6 +325,28 @@ mod tests {
         assert_eq!(pairs, [(PathBuf::from("b/x"), PathBuf::from("a/x"))]);
         assert_eq!(message, "Moved 1 item back");
         assert_eq!(moved.done_message(), "Moved 1 item to “b”");
+    }
+
+    #[test]
+    fn undo_batch_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.txt");
+        let b = dir.path().join("b.txt");
+        fs::write(&a, b"A").unwrap();
+        fs::write(&b, b"B").unwrap();
+        let done = crate::fs::batch::rename_all(&[
+            (a.clone(), "1.txt".into()),
+            (b.clone(), "2.txt".into()),
+        ])
+        .done;
+        let action = Action::BatchRename { pairs: done };
+        assert_eq!(action.done_message(), "Renamed 2 items");
+        let Undo::Done(result) = action.begin_undo() else {
+            panic!("immediate")
+        };
+        assert_eq!(result.unwrap(), "Names changed back for 2 items");
+        assert_eq!(fs::read(&a).unwrap(), b"A");
+        assert_eq!(fs::read(&b).unwrap(), b"B");
     }
 
     #[test]

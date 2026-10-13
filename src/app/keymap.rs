@@ -81,6 +81,7 @@ const TABLE: &[(Mods, Key, Command)] = &[
     (Mods::ALT, Key::D, Command::EditPath),
     (Mods::CTRL, Key::F, Command::Filter),
     (Mods::NONE, Key::F2, Command::Rename),
+    (Mods::CTRL, Key::F2, Command::BatchRename),
     (Mods::CTRL_SHIFT, Key::N, Command::NewFolder),
     (Mods::CTRL, Key::N, Command::NewFile),
     (Mods::NONE, Key::Delete, Command::Trash),

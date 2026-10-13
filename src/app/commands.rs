@@ -42,6 +42,7 @@ pub enum Command {
     PinFolder,
     TogglePreview,
     CommandPalette,
+    BatchRename,
     /// The palette, listing recent and favorite places.
     RecentPlaces,
 }
@@ -88,6 +89,7 @@ impl Command {
             Self::PinFolder => "Pin to Favorites",
             Self::TogglePreview => "Toggle preview panel",
             Self::CommandPalette => "Command palette",
+            Self::BatchRename => "Batch rename…",
             Self::RecentPlaces => "Browse recent locations",
         }
     }
@@ -114,6 +116,7 @@ impl Command {
             Self::OpenSettings => "open_settings",
             Self::TogglePreview => "toggle_preview",
             Self::CommandPalette => "command_palette",
+            Self::BatchRename => "batch_rename",
             Self::RecentPlaces => "recent_places",
             // Clipboard shortcuts are handled by the system layer, and
             // navigation keys are fixed.
@@ -122,12 +125,13 @@ impl Command {
     }
 
     /// Commands listed on the Keyboard settings page, in order.
-    pub const CUSTOMIZABLE: [Command; 19] = [
+    pub const CUSTOMIZABLE: [Command; 20] = [
         Command::CommandPalette,
         Command::RecentPlaces,
         Command::EditPath,
         Command::Filter,
         Command::Rename,
+        Command::BatchRename,
         Command::NewFile,
         Command::NewFolder,
         Command::Trash,
@@ -145,9 +149,10 @@ impl Command {
     ];
 
     /// Commands offered in the palette, in order of usefulness.
-    pub const PALETTE: [Command; 24] = [
+    pub const PALETTE: [Command; 25] = [
         Command::Open,
         Command::Rename,
+        Command::BatchRename,
         Command::NewFile,
         Command::NewFolder,
         Command::Copy,
