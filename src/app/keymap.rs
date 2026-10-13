@@ -100,6 +100,10 @@ const TABLE: &[(Mods, Key, Command)] = &[
     (Mods::CTRL, Key::Period, Command::TogglePreview),
     (Mods::CTRL, Key::P, Command::CommandPalette),
     (Mods::CTRL, Key::E, Command::RecentPlaces),
+    (Mods::CTRL, Key::T, Command::NewTab),
+    (Mods::CTRL, Key::W, Command::CloseTab),
+    (Mods::CTRL, Key::Tab, Command::NextTab),
+    (Mods::CTRL_SHIFT, Key::Tab, Command::PreviousTab),
 ];
 
 /// Arrow-style keys, each in three flavors: plain moves the selection,

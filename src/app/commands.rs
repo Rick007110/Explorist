@@ -43,6 +43,12 @@ pub enum Command {
     TogglePreview,
     CommandPalette,
     BatchRename,
+    NewTab,
+    CloseTab,
+    NextTab,
+    PreviousTab,
+    /// Open the selected folders in new tabs.
+    OpenInNewTab,
     /// The palette, listing recent and favorite places.
     RecentPlaces,
 }
@@ -90,6 +96,11 @@ impl Command {
             Self::TogglePreview => "Toggle preview panel",
             Self::CommandPalette => "Command palette",
             Self::BatchRename => "Batch rename…",
+            Self::NewTab => "New tab",
+            Self::CloseTab => "Close tab",
+            Self::NextTab => "Next tab",
+            Self::PreviousTab => "Previous tab",
+            Self::OpenInNewTab => "Open in new tab",
             Self::RecentPlaces => "Browse recent locations",
         }
     }
@@ -117,6 +128,10 @@ impl Command {
             Self::TogglePreview => "toggle_preview",
             Self::CommandPalette => "command_palette",
             Self::BatchRename => "batch_rename",
+            Self::NewTab => "new_tab",
+            Self::CloseTab => "close_tab",
+            Self::NextTab => "next_tab",
+            Self::PreviousTab => "previous_tab",
             Self::RecentPlaces => "recent_places",
             // Clipboard shortcuts are handled by the system layer, and
             // navigation keys are fixed.
@@ -125,7 +140,7 @@ impl Command {
     }
 
     /// Commands listed on the Keyboard settings page, in order.
-    pub const CUSTOMIZABLE: [Command; 20] = [
+    pub const CUSTOMIZABLE: [Command; 24] = [
         Command::CommandPalette,
         Command::RecentPlaces,
         Command::EditPath,
@@ -145,11 +160,15 @@ impl Command {
         Command::Open,
         Command::OpenTerminal,
         Command::TogglePreview,
+        Command::NewTab,
+        Command::CloseTab,
+        Command::NextTab,
+        Command::PreviousTab,
         Command::OpenSettings,
     ];
 
     /// Commands offered in the palette, in order of usefulness.
-    pub const PALETTE: [Command; 25] = [
+    pub const PALETTE: [Command; 28] = [
         Command::Open,
         Command::Rename,
         Command::BatchRename,
@@ -174,6 +193,9 @@ impl Command {
         Command::OpenTerminal,
         Command::PinFolder,
         Command::RecentPlaces,
+        Command::NewTab,
+        Command::CloseTab,
+        Command::OpenInNewTab,
         Command::OpenSettings,
     ];
 
@@ -189,6 +211,7 @@ impl Command {
                 | Self::Trash
                 | Self::DeletePermanently
                 | Self::PinFolder
+                | Self::OpenInNewTab
         )
     }
 
@@ -211,6 +234,10 @@ impl Command {
                 | Self::TogglePreview
                 | Self::CommandPalette
                 | Self::RecentPlaces
+                | Self::NewTab
+                | Self::CloseTab
+                | Self::NextTab
+                | Self::PreviousTab
                 | Self::JumpToPlace(_)
         )
     }

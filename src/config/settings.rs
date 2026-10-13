@@ -39,6 +39,9 @@ pub struct Settings {
     pub shortcuts: BTreeMap<String, String>,
     /// The preview panel is open (Ctrl .).
     pub show_preview: bool,
+    /// Folders open in tabs when Explorist closed, and which was active.
+    pub open_tabs: Vec<PathBuf>,
+    pub active_tab: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -72,6 +75,8 @@ impl Default for Settings {
             folder_sorts: BTreeMap::new(),
             shortcuts: BTreeMap::new(),
             show_preview: true,
+            open_tabs: Vec::new(),
+            active_tab: 0,
         }
     }
 }
@@ -271,6 +276,8 @@ mod tests {
             )]),
             shortcuts: BTreeMap::from([("rename".to_owned(), "Ctrl R".to_owned())]),
             show_preview: false,
+            open_tabs: vec![PathBuf::from("C:\\Users"), PathBuf::from("D:\\photos")],
+            active_tab: 1,
         };
         settings.save(&path).unwrap();
         assert!(!path.with_extension("toml.tmp").exists());

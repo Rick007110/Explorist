@@ -6,6 +6,7 @@ pub mod files;
 pub mod fuzzy;
 pub mod keymap;
 pub mod selection;
+pub mod tabs;
 pub mod undo;
 
 use std::path::{Path, PathBuf};
@@ -45,6 +46,10 @@ pub struct ExploristApp {
     pub(crate) preview: crate::fs::preview::Loader,
     /// Folders visited, most recent first, for the palette.
     pub(crate) recent: Vec<PathBuf>,
+    /// All tabs; the active one's slot is `None` because its state is in
+    /// `browser` and `view`.
+    pub(crate) tabs: Vec<Option<tabs::TabSlot>>,
+    pub(crate) active_tab: usize,
     pub(crate) preview_image: Option<ui::preview::PreviewImage>,
 }
 
@@ -171,7 +176,38 @@ impl ExploristApp {
             preview: Default::default(),
             preview_image: None,
             recent: Vec::new(),
+            tabs: vec![None],
+            active_tab: 0,
         };
+        // Reopen the other tabs from last time.
+        if app.settings.start_in == StartIn::LastFolder && std::env::args_os().nth(1).is_none() {
+            let saved = app.settings.open_tabs.clone();
+            let active = app.settings.active_tab;
+            for (i, path) in saved.iter().enumerate() {
+                if i == active || !path.is_dir() {
+                    continue;
+                }
+                let ctx = app.ctx.clone();
+                let browser = Browser::new(
+                    path.clone(),
+                    app.settings.sort_for(path),
+                    app.settings.show_hidden,
+                    Arc::new(move || ctx.request_repaint()),
+                );
+                let slot = tabs::TabSlot {
+                    browser,
+                    filter_open: false,
+                    filter_text: String::new(),
+                    list_offset: 0.0,
+                };
+                if i < active {
+                    app.tabs.insert(app.active_tab, Some(slot));
+                    app.active_tab += 1;
+                } else {
+                    app.tabs.push(Some(slot));
+                }
+            }
+        }
         if let LoadOutcome::Invalid { error, .. } = outcome {
             app.toast_error(format!(
                 "Settings couldn’t be read, so defaults are in use: {error}"
@@ -183,6 +219,8 @@ impl ExploristApp {
     pub(crate) fn save_settings(&mut self) {
         self.settings.show_hidden = self.browser.filter().show_hidden;
         self.settings.last_folder = Some(self.browser.location().to_path_buf());
+        self.settings.open_tabs = self.tab_locations();
+        self.settings.active_tab = self.active_tab;
         if let Some(path) = &self.settings_path
             && let Err(err) = self.settings.save(path)
         {
@@ -462,6 +500,25 @@ impl ExploristApp {
             Command::ToggleFocused => self.browser.select(|sel, rows| sel.toggle_focused(rows)),
             Command::OpenSettings => self.view.settings_open = true,
             Command::BatchRename => self.open_batch_rename(),
+            Command::NewTab => {
+                let here = self.browser.location().to_path_buf();
+                self.new_tab(here);
+            }
+            Command::CloseTab => self.close_tab(self.active_tab),
+            Command::NextTab => self.cycle_tab(true),
+            Command::PreviousTab => self.cycle_tab(false),
+            Command::OpenInNewTab => {
+                let folders: Vec<PathBuf> = self
+                    .browser
+                    .selected_entries()
+                    .iter()
+                    .filter(|e| e.is_dir)
+                    .map(|e| e.path.clone())
+                    .collect();
+                for folder in folders {
+                    self.new_tab(folder);
+                }
+            }
             Command::CommandPalette => {
                 self.view.palette = Some(crate::ui::palette::PaletteState::new(""));
             }
@@ -700,6 +757,7 @@ impl eframe::App for ExploristApp {
         self.view.maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
 
         self.browser.poll();
+        self.poll_background_tabs();
         if self.view.last_location != self.browser.location() {
             // Each folder opens with its own remembered sort.
             self.view.last_location = self.browser.location().to_path_buf();
