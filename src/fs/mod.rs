@@ -2,6 +2,7 @@
 //!
 //! Nothing in here depends on the UI, so all of it is unit-tested.
 
+pub mod clipboard;
 pub mod entry;
 pub mod filter;
 pub mod format;
