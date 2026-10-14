@@ -4,6 +4,19 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
+## 0.3.0
+
+### New
+- **Drive menu**: right-click a drive to open it, open it in a new tab or a terminal, copy its path, see its properties (capacity, free space, file system), eject it (USB sticks, SD cards, discs), or rename it (Windows and macOS).
+- Drives you plug in or eject now appear and disappear on their own.
+- **Quick Look**: press Space for a large preview of the selected file; the arrow keys move to the next one.
+- **Compress to .zip** and **Extract here** (.zip, .tar, .tar.gz) from the right-click menu, with progress, cancel and undo.
+- **Duplicate** (Ctrl D) makes a copy next to the original.
+- **New folder with selection**: moves the selected items into a new folder and lets you name it.
+- **Select none** (Ctrl Shift A) and **Invert selection** (Ctrl I).
+- **Open in new window** from the right-click menu.
+- The mouse's back and forward buttons go back and forward.
+
 ## 0.2.1
 
 ### New

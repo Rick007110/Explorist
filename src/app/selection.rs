@@ -107,6 +107,17 @@ impl Selection {
         self.anchor = Some(path.to_path_buf());
     }
 
+    /// Selects what wasn't selected, and the other way round.
+    pub fn invert(&mut self, rows: Rows<'_>) {
+        self.selected = rows
+            .visible
+            .iter()
+            .map(|&i| &rows.entries[i].path)
+            .filter(|p| !self.selected.contains(*p))
+            .cloned()
+            .collect();
+    }
+
     /// The selected paths, to restore or add to.
     pub fn snapshot(&self) -> HashSet<PathBuf> {
         self.selected.clone()
@@ -549,5 +560,20 @@ mod tests {
         sel.band(rows, &HashSet::new(), [1], Some(1));
         assert_eq!(sel.count(), 1);
         assert!(sel.is_selected(&entries[1].path));
+    }
+
+    #[test]
+    fn invert_flips_every_visible_row() {
+        let entries = entries(&NAMES);
+        let rows = Rows {
+            entries: &entries,
+            visible: &ALL,
+        };
+        let mut sel = Selection::default();
+        sel.click(rows, 1);
+        sel.invert(rows);
+        assert_eq!(selected(&sel, rows), ["a", "c", "d", "e"]);
+        sel.invert(rows);
+        assert_eq!(selected(&sel, rows), ["b"]);
     }
 }

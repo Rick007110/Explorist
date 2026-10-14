@@ -39,7 +39,7 @@ with rebindable shortcuts, and update checks.
 |---|---|
 | Command palette / recent places | Ctrl P / Ctrl E (`>` commands, `@` places, `/` files) |
 | Open | Enter (or double-click) |
-| Back / Forward | Alt ← / Alt → (Backspace also goes back) |
+| Back / Forward | Alt ← / Alt → (Backspace and the mouse's side buttons too) |
 | Up one level | Alt ↑ |
 | Edit path | Ctrl L or Alt D (Tab completes folders; anything that isn't a path searches) |
 | Filter by name | Ctrl F (`*` and `?` work as wildcards) |
@@ -51,7 +51,9 @@ with rebindable shortcuts, and update checks.
 | Undo | Ctrl Z |
 | Copy path | Ctrl Shift C |
 | Properties | Alt Enter |
-| Select all | Ctrl A |
+| Select all / none / invert | Ctrl A / Ctrl Shift A / Ctrl I |
+| Quick Look | Space (arrows move to the next item) |
+| Duplicate | Ctrl D |
 | Show hidden files | Ctrl H |
 | Preview panel | Ctrl . |
 | List / grid view | Ctrl G |

@@ -13,6 +13,7 @@ pub mod open_with;
 pub mod palette;
 pub mod preview;
 pub mod properties;
+pub mod quick_look;
 pub mod settings;
 pub mod sidebar;
 pub mod status_bar;

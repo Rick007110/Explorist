@@ -31,6 +31,16 @@ pub enum Work {
     },
     Trash(Vec<PathBuf>),
     Delete(Vec<PathBuf>),
+    /// Zip `sources` into `archive`, which mustn't exist.
+    Compress {
+        sources: Vec<PathBuf>,
+        archive: PathBuf,
+    },
+    /// Unpack `archive` into the new folder `dest`.
+    Extract {
+        archive: PathBuf,
+        dest: PathBuf,
+    },
 }
 
 impl Work {
@@ -66,6 +76,26 @@ impl Work {
         Ok(Self::Transfer { kind, pairs })
     }
 
+    /// Zips `sources` next to the first one, under a name that's free.
+    pub fn compress(sources: &[PathBuf]) -> Option<Self> {
+        let dir = sources.first()?.parent()?;
+        let archive = free_name(dir, &super::archive::zip_name(sources), false, &[]);
+        Some(Self::Compress {
+            sources: sources.to_vec(),
+            archive,
+        })
+    }
+
+    /// Unpacks `archive` into a new folder beside it, named after it.
+    pub fn extract(archive: &Path) -> Option<Self> {
+        let dir = archive.parent()?;
+        let dest = free_name(dir, &super::archive::stem(archive), false, &[]);
+        Some(Self::Extract {
+            archive: archive.to_path_buf(),
+            dest,
+        })
+    }
+
     /// Present-tense label for the status bar: "Copying", "Moving"...
     pub fn verb(&self) -> &'static str {
         match self {
@@ -79,6 +109,8 @@ impl Work {
             } => "Moving",
             Self::Trash(_) => "Moving to the Recycle Bin",
             Self::Delete(_) => "Deleting",
+            Self::Compress { .. } => "Compressing",
+            Self::Extract { .. } => "Extracting",
         }
     }
 
@@ -86,6 +118,8 @@ impl Work {
         match self {
             Self::Transfer { pairs, .. } => pairs.len(),
             Self::Trash(paths) | Self::Delete(paths) => paths.len(),
+            Self::Compress { sources, .. } => sources.len(),
+            Self::Extract { .. } => 1,
         }
     }
 }
@@ -322,9 +356,47 @@ impl Runner {
                     self.report(false);
                 }
             }
+            Work::Compress { sources, archive } => {
+                self.progress.bytes_total = super::archive::size_of(&sources);
+                self.report(true);
+                let result = super::archive::compress(&sources, &archive, &mut |done, name| {
+                    self.progress.bytes_done = done;
+                    self.progress.current = name.to_owned();
+                    self.report(false);
+                    !self.is_cancelled()
+                });
+                self.finish_single(&mut outcome, result, archive.clone(), archive);
+            }
+            Work::Extract { archive, dest } => {
+                self.progress.bytes_total = super::archive::unpacked_size(&archive);
+                self.report(true);
+                let result = super::archive::extract(&archive, &dest, &mut |done, name| {
+                    self.progress.bytes_done = done;
+                    self.progress.current = name.to_owned();
+                    self.report(false);
+                    !self.is_cancelled()
+                });
+                self.finish_single(&mut outcome, result, archive, dest);
+            }
         }
         self.report(true);
         outcome
+    }
+
+    /// Records how a one-result job (compress, extract) went.
+    fn finish_single(
+        &mut self,
+        outcome: &mut Outcome,
+        result: io::Result<()>,
+        from: PathBuf,
+        to: PathBuf,
+    ) {
+        match result {
+            Ok(()) => outcome.done.push((from, to)),
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => outcome.cancelled = true,
+            Err(err) => outcome.failed.push((from, err.to_string())),
+        }
+        self.progress.items_done = self.progress.items_total;
     }
 
     /// Copies a file or a whole folder. Returns `Interrupted` if cancelled.
@@ -550,5 +622,38 @@ mod tests {
         assert_eq!(outcome.done.len(), 1);
         assert_eq!(outcome.failed.len(), 1);
         assert!(!dir.path().join("src").exists());
+    }
+
+    #[test]
+    fn compress_and_extract_as_jobs() {
+        let dir = tree();
+        let src = dir.path().join("src");
+        let work = Work::compress(std::slice::from_ref(&src)).unwrap();
+        let Work::Compress { archive, .. } = &work else {
+            panic!("not a compress job")
+        };
+        assert_eq!(archive, &dir.path().join("src.zip"));
+        let outcome = run(work.clone());
+        assert_eq!(outcome.done.len(), 1, "{outcome:?}");
+
+        // A second one doesn't overwrite the first.
+        let Work::Compress {
+            archive: second, ..
+        } = Work::compress(&[src]).unwrap()
+        else {
+            panic!("not a compress job")
+        };
+        assert_eq!(second, dir.path().join("src - Copy.zip"));
+
+        let extract = Work::extract(&dir.path().join("src.zip")).unwrap();
+        let Work::Extract { dest, .. } = &extract else {
+            panic!("not an extract job")
+        };
+        // "src" exists already, so the folder gets another name.
+        assert_eq!(dest, &dir.path().join("src - Copy"));
+        let dest = dest.clone();
+        let outcome = run(extract);
+        assert_eq!(outcome.done.len(), 1, "{outcome:?}");
+        assert!(dest.join("src").is_dir());
     }
 }

@@ -89,6 +89,11 @@ pub struct ViewState {
     pub properties: Option<crate::ui::properties::PropertiesState>,
     pub open_with: Option<crate::ui::open_with::OpenWithState>,
     pub drive_dialog: Option<crate::ui::drive_dialog::DriveDialog>,
+    /// Quick Look is showing the focused item.
+    pub quick_look: bool,
+    /// Rename this item once the running job ends (New folder with
+    /// selection).
+    pub rename_after_job: Option<PathBuf>,
     /// Files being dragged inside the window.
     pub drag: Option<drag::FileDrag>,
     /// A selection box being dragged, where the list or grid sits, and
@@ -406,6 +411,23 @@ impl ExploristApp {
     /// Turns key presses into commands. Runs before the UI is drawn so
     /// shortcuts win over widgets that would otherwise react to the keys.
     fn handle_keys(&mut self, ctx: &egui::Context) {
+        // The mouse's back and forward buttons.
+        let (back, forward) = ctx.input(|i| {
+            (
+                i.pointer.button_pressed(egui::PointerButton::Extra1),
+                i.pointer.button_pressed(egui::PointerButton::Extra2),
+            )
+        });
+        if back {
+            self.browser.go_back();
+        }
+        if forward {
+            self.browser.go_forward();
+        }
+        if self.view.quick_look {
+            self.quick_look_keys(ctx);
+            return;
+        }
         // Dialogs and the palette handle their own keys.
         if self.view.confirm_delete.is_some()
             || self.view.properties.is_some()
@@ -491,6 +513,32 @@ impl ExploristApp {
                     keep
                 });
             });
+        }
+    }
+
+    /// While Quick Look shows: Space or Esc closes it, the arrows move on.
+    fn quick_look_keys(&mut self, ctx: &egui::Context) {
+        use egui::{Key, Modifiers};
+        let pressed = |key| ctx.input_mut(|i| i.consume_key(Modifiers::NONE, key));
+        if pressed(Key::Space) || pressed(Key::Escape) {
+            self.view.quick_look = false;
+            return;
+        }
+        for (key, target) in [
+            (Key::ArrowUp, MoveTarget::Up),
+            (Key::ArrowDown, MoveTarget::Down),
+            (Key::ArrowLeft, MoveTarget::Left),
+            (Key::ArrowRight, MoveTarget::Right),
+        ] {
+            if pressed(key) {
+                // In the list, left and right step through items too.
+                let target = match (target, self.view.columns > 1) {
+                    (MoveTarget::Left, false) => MoveTarget::Up,
+                    (MoveTarget::Right, false) => MoveTarget::Down,
+                    (t, _) => t,
+                };
+                self.move_focus(target, MoveMode::Replace);
+            }
         }
     }
 
@@ -643,6 +691,38 @@ impl ExploristApp {
                 #[cfg(windows)]
                 if let Err(err) = crate::fs::shell::open_as_admin(self.browser.location()) {
                     self.toast_error(format!("Couldn’t open as administrator: {err}"));
+                }
+            }
+            Command::Duplicate => self.duplicate_selection(),
+            Command::Compress => self.compress_selection(),
+            Command::Extract => self.extract_selection(),
+            Command::NewFolderWithSelection => self.new_folder_with_selection(),
+            Command::SelectNone => self.browser.select(|sel, _| sel.clear()),
+            Command::InvertSelection => self.browser.select(|sel, rows| sel.invert(rows)),
+            Command::QuickLook => {
+                self.view.quick_look = !self.view.quick_look
+                    && self
+                        .browser
+                        .selection
+                        .focused_row(self.browser.rows())
+                        .is_some();
+            }
+            Command::OpenInNewWindow => {
+                let folders: Vec<PathBuf> = self
+                    .browser
+                    .selected_entries()
+                    .iter()
+                    .filter(|e| e.is_dir)
+                    .map(|e| e.path.clone())
+                    .collect();
+                let target = folders
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| self.browser.location().to_path_buf());
+                let started = std::env::current_exe()
+                    .and_then(|exe| std::process::Command::new(exe).arg(&target).spawn());
+                if let Err(err) = started {
+                    self.toast_error(format!("Couldn’t open a new window: {err}"));
                 }
             }
             Command::OpenWith => {
@@ -977,6 +1057,7 @@ impl eframe::App for ExploristApp {
         ui::properties::show(&ctx, self);
         ui::open_with::show(&ctx, self);
         ui::drive_dialog::show(&ctx, self);
+        ui::quick_look::show(&ctx, self);
         ui::palette::show(&ctx, self);
         ui::batch_rename::show(&ctx, self);
         ui::update::show(&ctx, self);

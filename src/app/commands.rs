@@ -59,6 +59,20 @@ pub enum Command {
     OpenInNewTab,
     /// The palette, listing recent and favorite places.
     RecentPlaces,
+    /// Copy the selection into the same folder.
+    Duplicate,
+    /// Zip the selection.
+    Compress,
+    /// Unpack the selected archive into a folder beside it.
+    Extract,
+    /// Make a folder and move the selection into it.
+    NewFolderWithSelection,
+    SelectNone,
+    InvertSelection,
+    /// Start another Explorist at the selected folder, or this one.
+    OpenInNewWindow,
+    /// Space: a large preview of the focused item.
+    QuickLook,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,6 +131,14 @@ impl Command {
             Self::PreviousTab => "Previous tab",
             Self::OpenInNewTab => "Open in new tab",
             Self::RecentPlaces => "Browse recent locations",
+            Self::Duplicate => "Duplicate",
+            Self::Compress => "Compress to .zip",
+            Self::Extract => "Extract here",
+            Self::NewFolderWithSelection => "New folder with selection",
+            Self::SelectNone => "Select none",
+            Self::InvertSelection => "Invert selection",
+            Self::OpenInNewWindow => "Open in new window",
+            Self::QuickLook => "Quick Look",
         }
     }
 
@@ -150,6 +172,10 @@ impl Command {
             Self::NextTab => "next_tab",
             Self::PreviousTab => "previous_tab",
             Self::RecentPlaces => "recent_places",
+            Self::Duplicate => "duplicate",
+            Self::SelectNone => "select_none",
+            Self::InvertSelection => "invert_selection",
+            Self::QuickLook => "quick_look",
             // Clipboard shortcuts are handled by the system layer, and
             // navigation keys are fixed.
             _ => return None,
@@ -157,7 +183,7 @@ impl Command {
     }
 
     /// Commands listed on the Keyboard settings page, in order.
-    pub const CUSTOMIZABLE: [Command; 26] = [
+    pub const CUSTOMIZABLE: [Command; 30] = [
         Command::CommandPalette,
         Command::RecentPlaces,
         Command::EditPath,
@@ -169,6 +195,10 @@ impl Command {
         Command::Trash,
         Command::Undo,
         Command::SelectAll,
+        Command::SelectNone,
+        Command::InvertSelection,
+        Command::Duplicate,
+        Command::QuickLook,
         Command::ToggleHidden,
         Command::GoBack,
         Command::GoForward,
@@ -187,7 +217,7 @@ impl Command {
     ];
 
     /// Commands offered in the palette, in order of usefulness.
-    pub const PALETTE: [Command; 31] = [
+    pub const PALETTE: [Command; 39] = [
         Command::Open,
         Command::OpenWith,
         Command::Rename,
@@ -218,6 +248,14 @@ impl Command {
         Command::NewTab,
         Command::CloseTab,
         Command::OpenInNewTab,
+        Command::OpenInNewWindow,
+        Command::QuickLook,
+        Command::Duplicate,
+        Command::Compress,
+        Command::Extract,
+        Command::NewFolderWithSelection,
+        Command::SelectNone,
+        Command::InvertSelection,
         Command::OpenSettings,
     ];
 
@@ -228,6 +266,11 @@ impl Command {
             self,
             Self::Open
                 | Self::OpenWith
+                | Self::Duplicate
+                | Self::Compress
+                | Self::Extract
+                | Self::NewFolderWithSelection
+                | Self::QuickLook
                 | Self::Rename
                 | Self::Copy
                 | Self::Cut

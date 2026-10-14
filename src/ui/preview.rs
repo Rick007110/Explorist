@@ -342,7 +342,7 @@ fn single(
     });
 }
 
-fn code_block(ui: &mut egui::Ui, p: &Palette, lines: &[String], truncated: bool) {
+pub(crate) fn code_block(ui: &mut egui::Ui, p: &Palette, lines: &[String], truncated: bool) {
     let font = crate::ui::fonts::mono(12.0);
     let number_width = format!("{}", lines.len()).len() as f32 * 7.3 + 8.0;
     Frame::NONE
@@ -443,20 +443,7 @@ fn image_block(
     pixels: &[u8],
     scaled: [usize; 2],
 ) {
-    let stale = app
-        .preview_image
-        .as_ref()
-        .is_none_or(|img| img.path != path);
-    if stale {
-        let image = egui::ColorImage::from_rgba_unmultiplied(scaled, pixels);
-        let texture = ui
-            .ctx()
-            .load_texture("preview-image", image, TextureOptions::LINEAR);
-        app.preview_image = Some(PreviewImage {
-            path: path.to_path_buf(),
-            texture,
-        });
-    }
+    ensure_image(ui.ctx(), app, path, pixels, scaled);
     let Some(img) = &app.preview_image else {
         return;
     };
@@ -480,4 +467,27 @@ fn image_block(
             .font(crate::ui::fonts::mono(11.5))
             .color(p.muted),
     );
+}
+
+/// Makes sure the loaded image for `path` is a texture in
+/// `app.preview_image`.
+pub(crate) fn ensure_image(
+    ctx: &egui::Context,
+    app: &mut ExploristApp,
+    path: &std::path::Path,
+    pixels: &[u8],
+    scaled: [usize; 2],
+) {
+    let stale = app
+        .preview_image
+        .as_ref()
+        .is_none_or(|img| img.path != path);
+    if stale {
+        let image = egui::ColorImage::from_rgba_unmultiplied(scaled, pixels);
+        let texture = ctx.load_texture("preview-image", image, TextureOptions::LINEAR);
+        app.preview_image = Some(PreviewImage {
+            path: path.to_path_buf(),
+            texture,
+        });
+    }
 }

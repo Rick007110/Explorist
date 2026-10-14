@@ -83,6 +83,54 @@ impl ExploristApp {
         }
     }
 
+    /// Ctrl D: copies of the selection, beside it.
+    pub(crate) fn duplicate_selection(&mut self) {
+        let paths = self.selected_paths();
+        let here = self.browser.location().to_path_buf();
+        self.transfer(TransferKind::Copy, &paths, &here, false);
+    }
+
+    pub(crate) fn compress_selection(&mut self) {
+        let paths = self.selected_paths();
+        if let Some(work) = Work::compress(&paths) {
+            self.start_job(work, None, false);
+        }
+    }
+
+    /// Unpacks the first selected archive.
+    pub(crate) fn extract_selection(&mut self) {
+        let archive = self
+            .selected_paths()
+            .into_iter()
+            .find(|p| crate::fs::archive::is_archive(p));
+        match archive.and_then(|a| Work::extract(&a)) {
+            Some(work) => self.start_job(work, None, false),
+            None => self.toast("Select a .zip, .tar or .tar.gz file".to_owned(), false),
+        }
+    }
+
+    /// Finder's "New Folder with Selection": a new folder holding the
+    /// selection, named straight away.
+    pub(crate) fn new_folder_with_selection(&mut self) {
+        let paths = self.selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let here = self.browser.location().to_path_buf();
+        let name = crate::fs::ops::unique_name(&here, "New folder with items", "");
+        match crate::fs::ops::create_folder(&here, &name) {
+            Ok(folder) => {
+                self.push_undo(Action::Create {
+                    path: folder.clone(),
+                    is_dir: true,
+                });
+                self.view.rename_after_job = Some(folder.clone());
+                self.transfer(TransferKind::Move, &paths, &folder, false);
+            }
+            Err(err) => self.toast_error(format!("Couldn’t create the folder: {err}")),
+        }
+    }
+
     pub(crate) fn trash_selection(&mut self) {
         let paths = self.selected_paths();
         if !paths.is_empty() {
@@ -169,6 +217,10 @@ impl ExploristApp {
                 outcome.done.iter().map(|(p, _)| p.clone()).collect(),
                 Vec::new(),
             ),
+            Work::Compress { .. } | Work::Extract { .. } => (
+                Vec::new(),
+                outcome.done.iter().map(|(_, to)| to.clone()).collect(),
+            ),
         };
         let next_focus = self.row_after_removal(&removed);
         let removed_here: Vec<PathBuf> = removed.into_iter().filter(|p| inside(p)).collect();
@@ -216,6 +268,12 @@ impl ExploristApp {
                 paths: outcome.done.iter().map(|(p, _)| p.clone()).collect(),
             }),
             Work::Delete(_) => None,
+            Work::Compress { .. } | Work::Extract { .. } => {
+                outcome.done.first().map(|(_, to)| Action::Archive {
+                    created: to.clone(),
+                    extracted: matches!(running.job.work, Work::Extract { .. }),
+                })
+            }
         };
         if let Some((path, err)) = outcome.failed.first() {
             let name = path
@@ -241,6 +299,13 @@ impl ExploristApp {
         }
         if let Some(action) = action {
             self.undo.push(action);
+        }
+        if let Some(path) = self.view.rename_after_job.take()
+            && let Ok(entry) = Entry::from_path(&path)
+        {
+            self.browser.apply_change(&[], vec![entry.clone()]);
+            self.browser.selection.select_only(&entry.path);
+            self.begin_rename(&entry);
         }
     }
 

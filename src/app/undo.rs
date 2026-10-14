@@ -37,6 +37,11 @@ pub enum Action {
     Move {
         pairs: Vec<(PathBuf, PathBuf)>,
     },
+    /// A zip made, or a folder extracted; undo sends it to the Recycle Bin.
+    Archive {
+        created: PathBuf,
+        extracted: bool,
+    },
 }
 
 /// What undoing takes.
@@ -70,6 +75,11 @@ impl Action {
                 count(pairs.len()),
                 to_folder(pairs.first().map(|(_, to)| to))
             ),
+            Self::Archive {
+                created,
+                extracted: false,
+            } => format!("Compressed to “{}”", file_name(created)),
+            Self::Archive { created, .. } => format!("Extracted to “{}”", file_name(created)),
         }
     }
 
@@ -89,6 +99,10 @@ impl Action {
                         .collect(),
                 },
                 format!("Moved {} back", count(pairs.len())),
+            ),
+            Self::Archive { created, .. } => Undo::Job(
+                Work::Trash(vec![created.clone()]),
+                format!("Removed “{}”", file_name(created)),
             ),
             other => Undo::Done(other.undo()),
         }
@@ -129,9 +143,9 @@ impl Action {
                     )))),
                 }
             }
-            Self::Copy { .. } | Self::Move { .. } => Err(OpError::Io(std::io::Error::other(
-                "this undo runs in the background",
-            ))),
+            Self::Copy { .. } | Self::Move { .. } | Self::Archive { .. } => Err(OpError::Io(
+                std::io::Error::other("this undo runs in the background"),
+            )),
         }
     }
 }

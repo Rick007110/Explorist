@@ -662,15 +662,30 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
     let many = app.browser.selection.count() > 1;
     let any_folder = app.browser.selected_entries().iter().any(|e| e.is_dir);
     let any_file = app.browser.selected_entries().iter().any(|e| !e.is_dir);
+    let any_archive = app
+        .browser
+        .selected_entries()
+        .iter()
+        .any(|e| !e.is_dir && crate::fs::archive::is_archive(&e.path));
     let items: &[Option<(Command, &str)>] = &[
         Some((Command::Open, Command::Open.label())),
         Some((Command::OpenWith, Command::OpenWith.label())),
         Some((Command::OpenInNewTab, Command::OpenInNewTab.label())),
+        Some((Command::OpenInNewWindow, Command::OpenInNewWindow.label())),
         Some((Command::OpenTerminal, Command::OpenTerminal.label())),
+        Some((Command::QuickLook, Command::QuickLook.label())),
         None,
         Some((Command::Cut, Command::Cut.label())),
         Some((Command::Copy, Command::Copy.label())),
+        Some((Command::Duplicate, Command::Duplicate.label())),
         Some((Command::CopyPath, Command::CopyPath.label())),
+        None,
+        Some((Command::Compress, Command::Compress.label())),
+        Some((Command::Extract, Command::Extract.label())),
+        Some((
+            Command::NewFolderWithSelection,
+            Command::NewFolderWithSelection.label(),
+        )),
         None,
         Some((Command::Rename, Command::Rename.label())),
         Some((Command::BatchRename, Command::BatchRename.label())),
@@ -691,6 +706,9 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
                     Command::Rename => !many,
                     Command::PinFolder | Command::OpenInNewTab => any_folder,
                     Command::OpenWith => any_file,
+                    Command::OpenInNewWindow => any_folder && !many,
+                    Command::Extract => any_archive,
+                    Command::QuickLook => !many,
                     _ => true,
                 };
                 if menu::item_labeled(ui, &p, label, *command, enabled) {
