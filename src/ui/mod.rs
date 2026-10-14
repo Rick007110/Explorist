@@ -2,6 +2,7 @@
 
 pub mod batch_rename;
 pub mod dialogs;
+pub mod drive_dialog;
 pub mod file_list;
 pub mod fonts;
 pub mod grid;

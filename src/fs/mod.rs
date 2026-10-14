@@ -21,6 +21,7 @@ pub mod props;
 pub mod shell;
 pub mod sort;
 pub mod thumbs;
+pub mod volumes;
 pub mod watch;
 
 /// Helpers shared by tests across modules.

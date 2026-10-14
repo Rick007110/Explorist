@@ -58,7 +58,23 @@ pub struct ExploristApp {
     git_folder: PathBuf,
     pub(crate) preview_image: Option<ui::preview::PreviewImage>,
     pub(crate) thumbs: ui::grid::ThumbCache,
+    /// Results of background tasks like ejecting a drive, shown as toasts.
+    notices: (
+        std::sync::mpsc::Sender<Notice>,
+        std::sync::mpsc::Receiver<Notice>,
+    ),
+    /// When the drive list was last read, to notice drives coming and going.
+    drives_read: Instant,
 }
+
+/// A background task's outcome, for a toast.
+pub(crate) struct Notice {
+    pub text: String,
+    pub error: bool,
+}
+
+/// How often the drive list is read again.
+const DRIVE_POLL: std::time::Duration = std::time::Duration::from_secs(4);
 
 /// Transient UI state: what's open, being edited or shown.
 #[derive(Default)]
@@ -72,6 +88,7 @@ pub struct ViewState {
     pub confirm_delete: Option<Vec<PathBuf>>,
     pub properties: Option<crate::ui::properties::PropertiesState>,
     pub open_with: Option<crate::ui::open_with::OpenWithState>,
+    pub drive_dialog: Option<crate::ui::drive_dialog::DriveDialog>,
     /// Files being dragged inside the window.
     pub drag: Option<drag::FileDrag>,
     /// A selection box being dragged, where the list or grid sits, and
@@ -210,6 +227,8 @@ impl ExploristApp {
             update: Default::default(),
             git_seen: (u64::MAX, Instant::now()),
             git_folder: PathBuf::new(),
+            notices: std::sync::mpsc::channel(),
+            drives_read: Instant::now(),
         };
         // Reopen the other tabs from last time.
         if app.settings.start_in == StartIn::LastFolder && std::env::args_os().nth(1).is_none() {
@@ -339,6 +358,37 @@ impl ExploristApp {
         });
     }
 
+    /// Runs `task` on a background thread and shows its outcome as a
+    /// toast; the drive list is read again afterwards.
+    pub(crate) fn background(&self, task: impl FnOnce() -> Notice + Send + 'static) {
+        let tx = self.notices.0.clone();
+        let ctx = self.ctx.clone();
+        std::thread::Builder::new()
+            .name("explorist-task".into())
+            .spawn(move || {
+                let _ = tx.send(task());
+                ctx.request_repaint();
+            })
+            .ok();
+    }
+
+    fn poll_background(&mut self, ctx: &egui::Context) {
+        while let Ok(notice) = self.notices.1.try_recv() {
+            if notice.error {
+                self.toast_error(notice.text);
+            } else {
+                self.toast(notice.text, false);
+            }
+            refresh_drives(&self.drives, ctx);
+            self.drives_read = Instant::now();
+        }
+        if self.drives_read.elapsed() >= DRIVE_POLL {
+            refresh_drives(&self.drives, ctx);
+            self.drives_read = Instant::now();
+        }
+        ctx.request_repaint_after(DRIVE_POLL);
+    }
+
     pub(crate) fn toast_error(&mut self, message: String) {
         self.view.toast = Some(Toast {
             message,
@@ -360,6 +410,7 @@ impl ExploristApp {
         if self.view.confirm_delete.is_some()
             || self.view.properties.is_some()
             || self.view.open_with.is_some()
+            || self.view.drive_dialog.is_some()
             || self.view.palette.is_some()
             || self.view.batch.is_some()
         {
@@ -591,7 +642,7 @@ impl ExploristApp {
             Command::OpenAsAdmin => {
                 #[cfg(windows)]
                 if let Err(err) = crate::fs::shell::open_as_admin(self.browser.location()) {
-                    self.toast(format!("Couldn’t open as administrator: {err}"), true);
+                    self.toast_error(format!("Couldn’t open as administrator: {err}"));
                 }
             }
             Command::OpenWith => {
@@ -897,6 +948,7 @@ impl eframe::App for ExploristApp {
             }
         }
         self.poll_job();
+        self.poll_background(&ctx);
         self.refresh_git(&ctx);
         self.handle_dropped_files(&ctx);
         if let Some(wait) = self.browser.repaint_in() {
@@ -924,6 +976,7 @@ impl eframe::App for ExploristApp {
         ui::dialogs::confirm_delete(&ctx, self);
         ui::properties::show(&ctx, self);
         ui::open_with::show(&ctx, self);
+        ui::drive_dialog::show(&ctx, self);
         ui::palette::show(&ctx, self);
         ui::batch_rename::show(&ctx, self);
         ui::update::show(&ctx, self);
@@ -942,10 +995,12 @@ fn refresh_drives(drives: &Arc<Mutex<Vec<Drive>>>, ctx: &egui::Context) {
         .name("explorist-drives".into())
         .spawn(move || {
             let list = places::drives();
-            if let Ok(mut guard) = drives.lock() {
+            if let Ok(mut guard) = drives.lock()
+                && *guard != list
+            {
                 *guard = list;
+                ctx.request_repaint();
             }
-            ctx.request_repaint();
         })
         .ok();
 }

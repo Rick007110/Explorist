@@ -120,7 +120,7 @@ impl ExploristApp {
         // The system kept the button release to itself.
         self.view.release_pointer = true;
         if let Err(err) = result {
-            self.toast(format!("Couldn’t drag out: {err}"), true);
+            self.toast_error(format!("Couldn’t drag out: {err}"));
         }
     }
 

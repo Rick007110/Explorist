@@ -35,6 +35,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
             let location = app.browser.location().to_path_buf();
             let mut go = None;
             let mut unpin = None;
+            let mut drive_action: Option<(DriveAction, crate::fs::places::Drive)> = None;
             let drives = app.drives.lock().map(|d| d.clone()).unwrap_or_default();
             // Highlight the most specific place containing the current folder.
             let active_path = app
@@ -188,6 +189,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 if response.clicked() {
                     go = Some(drive.root.clone());
                 }
+                response.context_menu(|ui| {
+                    if let Some(action) = drive_menu(ui, &p, drive) {
+                        drive_action = Some((action, drive.clone()));
+                    }
+                });
             }
 
             // "Jump to place  Alt 1–9" at the bottom.
@@ -218,6 +224,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
             if let Some(path) = unpin {
                 app.unpin(&path);
             }
+            if let Some((action, drive)) = drive_action {
+                run_drive_action(ui.ctx(), app, action, drive);
+            }
         });
 }
 
@@ -237,4 +246,75 @@ fn paint_row_bg(
     };
     ui.painter()
         .rect_filled(rect, CornerRadius::same(radius::SM), fill);
+}
+
+/// What the drive menu asked for.
+#[derive(Clone, Copy)]
+enum DriveAction {
+    Open,
+    OpenInNewTab,
+    OpenTerminal,
+    CopyPath,
+    Rename,
+    Eject,
+    Properties,
+}
+
+fn drive_menu(
+    ui: &mut egui::Ui,
+    p: &crate::ui::theme::Palette,
+    drive: &crate::fs::places::Drive,
+) -> Option<DriveAction> {
+    use crate::fs::volumes;
+    use crate::ui::menu;
+    menu::style(ui);
+    let mut picked = None;
+    let mut item = |ui: &mut egui::Ui, label: &str, action| {
+        if menu::plain_item(ui, p, label) {
+            picked = Some(action);
+        }
+    };
+    item(ui, "Open", DriveAction::Open);
+    item(ui, "Open in new tab", DriveAction::OpenInNewTab);
+    item(ui, "Open terminal here", DriveAction::OpenTerminal);
+    item(ui, "Copy path", DriveAction::CopyPath);
+    let rename = volumes::can_rename(drive);
+    let eject = volumes::can_eject(drive);
+    if rename || eject {
+        menu::separator(ui, p);
+    }
+    if rename {
+        item(ui, "Rename…", DriveAction::Rename);
+    }
+    if eject {
+        item(ui, "Eject", DriveAction::Eject);
+    }
+    menu::separator(ui, p);
+    item(ui, "Properties", DriveAction::Properties);
+    picked
+}
+
+fn run_drive_action(
+    ctx: &egui::Context,
+    app: &mut ExploristApp,
+    action: DriveAction,
+    drive: crate::fs::places::Drive,
+) {
+    use crate::ui::drive_dialog::{self, DriveDialog};
+    match action {
+        DriveAction::Open => app.browser.navigate(drive.root),
+        DriveAction::OpenInNewTab => app.new_tab(drive.root),
+        DriveAction::OpenTerminal => {
+            if let Err(err) = crate::fs::shell::open_terminal(&drive.root) {
+                app.toast_error(format!("Couldn’t open a terminal: {err}"));
+            }
+        }
+        DriveAction::CopyPath => {
+            ctx.copy_text(drive.root.display().to_string());
+            app.toast("Path copied".to_owned(), false);
+        }
+        DriveAction::Rename => app.view.drive_dialog = Some(DriveDialog::rename(drive)),
+        DriveAction::Eject => drive_dialog::eject(app, drive),
+        DriveAction::Properties => app.view.drive_dialog = Some(DriveDialog::properties(drive)),
+    }
 }

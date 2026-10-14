@@ -225,7 +225,7 @@ pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
         let files = state.files.clone();
         close = true;
         if let Err(err) = open_with::launch(&chosen, &files) {
-            app.toast(format!("Couldn’t open {}: {err}", chosen.name), true);
+            app.toast_error(format!("Couldn’t open {}: {err}", chosen.name));
         }
     }
     if close {
