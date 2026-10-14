@@ -4,6 +4,14 @@
 use explorist::app::ExploristApp;
 
 fn main() -> eframe::Result {
+    match std::env::args().nth(1).as_deref() {
+        Some("--version") => {
+            println!("{}", explorist::update::CURRENT);
+            return Ok(());
+        }
+        Some("--update-now") => std::process::exit(explorist::update::update_now()),
+        _ => {}
+    }
     let viewport = egui::ViewportBuilder::default()
         .with_title("Explorist")
         .with_icon(icon())

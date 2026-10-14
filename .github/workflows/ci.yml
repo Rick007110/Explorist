@@ -45,3 +45,11 @@ jobs:
               while IFS= read -r line; do echo "::error::$line"; done
             exit 1
           }
+      - name: Update end to end
+        shell: bash
+        run: |
+          set -o pipefail
+          scripts/update-test.sh 2>&1 | tee update-output.txt || {
+            tail -n 8 update-output.txt | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          }

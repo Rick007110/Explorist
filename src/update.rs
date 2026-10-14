@@ -190,7 +190,9 @@ fn agent() -> ureq::Agent {
 
 /// Asks GitHub for the latest release and compares it with this version.
 pub fn check() -> CheckResult {
-    let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
+    // The update test in CI points this at a local server.
+    let url = std::env::var("EXPLORIST_UPDATE_API")
+        .unwrap_or_else(|_| format!("https://api.github.com/repos/{REPO}/releases/latest"));
     let response = agent()
         .get(&url)
         .header("User-Agent", &format!("Explorist/{CURRENT}"))
@@ -226,6 +228,41 @@ fn compare(release: Result<Release, String>, current: &str) -> CheckResult {
         (Some(latest), Some(mine)) if latest > mine => CheckResult::Available(release),
         (Some(_), Some(_)) => CheckResult::UpToDate,
         _ => CheckResult::Failed(format!("can’t read version “{}”", release.version)),
+    }
+}
+
+/// `explorist --update-now`: checks and installs without the window, for
+/// the end-to-end update test. Returns the process exit code.
+pub fn update_now() -> i32 {
+    match check() {
+        CheckResult::Available(release) => {
+            let Some(url) = release.download else {
+                eprintln!("{} has no download for this platform", release.version);
+                return 1;
+            };
+            match install(&url, &|_, _| {}) {
+                Ok(()) => {
+                    println!("updated to {}", release.version);
+                    0
+                }
+                Err(err) => {
+                    eprintln!("update failed: {err}");
+                    1
+                }
+            }
+        }
+        CheckResult::UpToDate => {
+            println!("up to date");
+            0
+        }
+        CheckResult::NoReleases => {
+            eprintln!("no releases found");
+            1
+        }
+        CheckResult::Failed(err) => {
+            eprintln!("check failed: {err}");
+            1
+        }
     }
 }
 
