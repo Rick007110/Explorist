@@ -92,7 +92,10 @@ impl ThumbCache {
 pub fn tiles(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Command>) {
     let count = app.browser.rows().len();
     let area = ui.available_rect_before_wrap();
-    let background = ui.interact(area, ui.id().with("grid-bg"), Sense::click());
+    let background = ui.interact(area, ui.id().with("grid-bg"), Sense::click_and_drag());
+    if background.drag_started() {
+        app.begin_marquee(ui.ctx());
+    }
     if background.clicked() {
         app.browser.select(|sel, _| sel.clear());
         app.view.rename = None;
@@ -117,6 +120,10 @@ pub fn tiles(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comma
     let mut scroll = ScrollArea::vertical()
         .id_salt("grid")
         .auto_shrink([false, false]);
+    let marquee_scroll = std::mem::take(&mut app.view.marquee_scroll);
+    if marquee_scroll != 0.0 {
+        scroll = scroll.vertical_scroll_offset((app.view.list_offset + marquee_scroll).max(0.0));
+    }
     if std::mem::take(&mut app.view.scroll_to_focus)
         && let Some(row) = app.browser.selection.focused_row(app.browser.rows())
     {
@@ -153,6 +160,18 @@ pub fn tiles(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comma
         .inner;
     app.view.list_offset = output.state.offset.y;
     app.view.list_height = output.inner_rect.height();
+    app.view.viewport = super::marquee::Viewport {
+        rect: output.inner_rect,
+        offset: output.state.offset.y,
+    };
+    app.view.marquee_scroll = app.update_marquee(
+        ui,
+        super::marquee::Layout::Grid {
+            columns,
+            tile: vec2(tile_width, TILE_HEIGHT),
+            gap: GAP,
+        },
+    );
 }
 
 fn tile(
@@ -327,6 +346,6 @@ fn tile(
         response
     };
     super::file_list::handle_clicks(
-        ui, app, &response, &entry, row, selected, renaming, commands,
+        ui, app, &response, &entry, row, selected, renaming, true, commands,
     );
 }

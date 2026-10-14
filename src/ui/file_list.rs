@@ -287,7 +287,10 @@ fn rows(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Command>) 
 
     let area = ui.available_rect_before_wrap();
     // Clicks and right-clicks on empty space below the rows.
-    let background = ui.interact(area, ui.id().with("list-bg"), Sense::click());
+    let background = ui.interact(area, ui.id().with("list-bg"), Sense::click_and_drag());
+    if background.drag_started() {
+        app.begin_marquee(ui.ctx());
+    }
     if background.clicked() {
         app.browser.select(|sel, _| sel.clear());
         app.view.rename = None;
@@ -300,6 +303,10 @@ fn rows(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Command>) 
     let mut scroll = ScrollArea::vertical()
         .id_salt("rows")
         .auto_shrink([false, false]);
+    let marquee_scroll = std::mem::take(&mut app.view.marquee_scroll);
+    if marquee_scroll != 0.0 {
+        scroll = scroll.vertical_scroll_offset((app.view.list_offset + marquee_scroll).max(0.0));
+    }
     if std::mem::take(&mut app.view.scroll_to_focus)
         && let Some(row) = app.browser.selection.focused_row(app.browser.rows())
     {
@@ -331,6 +338,17 @@ fn rows(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Command>) 
         .inner;
     app.view.list_offset = output.state.offset.y;
     app.view.list_height = output.inner_rect.height();
+    app.view.viewport = crate::ui::marquee::Viewport {
+        rect: output.inner_rect,
+        offset: output.state.offset.y,
+    };
+    app.view.marquee_scroll = app.update_marquee(
+        ui,
+        crate::ui::marquee::Layout::List {
+            row_height: row_h,
+            step,
+        },
+    );
 }
 
 fn draw_row(
@@ -410,6 +428,9 @@ fn draw_row(
         Pos2::new(name_cell.right(), rect.bottom()),
     );
 
+    // Dragging the icon or name moves files; dragging anywhere else on
+    // the row draws a selection box, as in Explorer.
+    let mut grab_right = name_rect.left();
     let meta = |s: String| (s, crate::ui::fonts::mono(12.0), p.text_2);
     if renaming {
         rename_field(
@@ -430,6 +451,7 @@ fn draw_row(
         let badge_w = if badge.is_some() { 30.0 } else { 0.0 };
         let galley = widgets::truncated(ui, &entry.name, font, color, name_rect.width() - badge_w);
         let name_w = galley.size().x;
+        grab_right = name_rect.left() + name_w + badge_w;
         widgets::paint_aligned(ui.painter(), name_rect, galley, Align2::LEFT_CENTER, color);
         if let Some(state) = badge {
             let tint = match state {
@@ -480,12 +502,18 @@ fn draw_row(
         widgets::paint_aligned(ui.painter(), type_cell, g, Align2::LEFT_CENTER, p.muted);
     }
 
+    let grab = Rect::from_min_max(
+        Pos2::new(icon_rect.left() - 6.0, rect.top()),
+        Pos2::new(grab_right + 8.0, rect.bottom()),
+    );
+    let on_name = ui.input(|i| i.pointer.press_origin().is_some_and(|p| grab.contains(p)));
     handle_clicks(
-        ui, app, &response, &entry, row, selected, renaming, commands,
+        ui, app, &response, &entry, row, selected, renaming, on_name, commands,
     );
 }
 
-/// Selection, opening, and the context menu, for a row or a tile.
+/// Selection, opening, and the context menu, for a row or a tile. A drag
+/// moves files when it starts on `grab`, else draws a selection box.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_clicks(
     ui: &egui::Ui,
@@ -495,10 +523,15 @@ pub(super) fn handle_clicks(
     row: usize,
     selected: bool,
     renaming: bool,
+    grab: bool,
     commands: &mut Vec<Command>,
 ) {
     if response.drag_started() && !renaming && app.view.rename.is_none() {
-        app.begin_drag(row, selected);
+        if grab {
+            app.begin_drag(row, selected);
+        } else {
+            app.begin_marquee(ui.ctx());
+        }
     }
     if response.clicked() || response.secondary_clicked() {
         if renaming {

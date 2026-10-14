@@ -107,6 +107,32 @@ impl Selection {
         self.anchor = Some(path.to_path_buf());
     }
 
+    /// The selected paths, to restore or add to.
+    pub fn snapshot(&self) -> HashSet<PathBuf> {
+        self.selected.clone()
+    }
+
+    /// Selection box: exactly `base` plus the rows in `hits`, with focus on
+    /// `focus` (the row the box ends nearest).
+    pub fn band(
+        &mut self,
+        rows: Rows<'_>,
+        base: &HashSet<PathBuf>,
+        hits: impl IntoIterator<Item = usize>,
+        focus: Option<usize>,
+    ) {
+        self.selected = base.clone();
+        self.selected.extend(
+            hits.into_iter()
+                .filter_map(|r| rows.get(r))
+                .map(|e| e.path.clone()),
+        );
+        if let Some(entry) = focus.and_then(|r| rows.get(r)) {
+            self.focus = Some(entry.path.clone());
+            self.anchor = Some(entry.path.clone());
+        }
+    }
+
     /// Plain click.
     pub fn click(&mut self, rows: Rows<'_>, row: usize) {
         if let Some(entry) = rows.get(row) {
@@ -505,5 +531,23 @@ mod tests {
         };
         assert_eq!(find_by_name(rows, "docs"), Some(0));
         assert_eq!(find_by_name(rows, "missing"), None);
+    }
+
+    #[test]
+    fn a_band_adds_its_rows_to_the_base() {
+        let entries = entries(&NAMES);
+        let rows = Rows {
+            entries: &entries,
+            visible: &ALL,
+        };
+        let mut sel = Selection::default();
+        sel.click(rows, 0);
+        let base = sel.snapshot();
+        sel.band(rows, &base, [2, 3], Some(3));
+        assert_eq!(sel.count(), 3);
+        assert!(sel.is_focused(&entries[3].path));
+        sel.band(rows, &HashSet::new(), [1], Some(1));
+        assert_eq!(sel.count(), 1);
+        assert!(sel.is_selected(&entries[1].path));
     }
 }

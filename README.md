@@ -63,6 +63,7 @@ with rebindable shortcuts, and update checks.
 | Move / extend selection / move focus only | ↑ ↓ PgUp PgDn Home End, with Shift / Ctrl |
 | Toggle the focused item | Ctrl Space |
 | Jump to a name | Start typing |
+| Select with a box | Drag across empty space (Ctrl adds to the selection) |
 | Move / copy by dragging | Drag onto a folder or sidebar place (hold Ctrl, or Option on macOS, to copy) |
 
 Most shortcuts can be changed in Settings → Keyboard.

@@ -74,6 +74,11 @@ pub struct ViewState {
     pub open_with: Option<crate::ui::open_with::OpenWithState>,
     /// Files being dragged inside the window.
     pub drag: Option<drag::FileDrag>,
+    /// A selection box being dragged, where the list or grid sits, and
+    /// how far to scroll it next frame.
+    pub marquee: Option<crate::ui::marquee::Marquee>,
+    pub viewport: crate::ui::marquee::Viewport,
+    pub marquee_scroll: f32,
     /// A drag out of the window ended; the system kept the mouse release,
     /// so send egui one.
     pub release_pointer: bool,

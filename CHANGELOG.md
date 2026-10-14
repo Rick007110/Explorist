@@ -4,6 +4,14 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
+## 0.2.1
+
+### New
+- **Selection box**: drag across empty space to select several files at once, in the list or the grid. In the list, start on a row's blank part or its Size, Modified or Type columns (dragging the name still moves files). Hold Ctrl (⌘ on macOS) to add to the selection. The view scrolls when you drag near the top or bottom.
+
+### Fixed
+- Updating on macOS left an app that macOS refused to open. Updates now replace the whole app. Install this version by hand once; updates after it work by themselves.
+
 ## 0.2.0
 
 ### New

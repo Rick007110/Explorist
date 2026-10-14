@@ -306,6 +306,13 @@ fn install(url: &str, progress: &dyn Fn(u64, u64)) -> io::Result<()> {
         progress(zip_bytes.len() as u64, total);
     }
 
+    // On macOS the whole app is replaced: swapping only the program would
+    // break the app's signature, and macOS would refuse to open it.
+    #[cfg(target_os = "macos")]
+    if let Some(app) = std::env::current_exe().ok().and_then(|e| app_bundle(&e)) {
+        return install_bundle(&zip_bytes, &app);
+    }
+
     let dir = std::env::temp_dir().join(format!("explorist-update-{}", std::process::id()));
     std::fs::create_dir_all(&dir)?;
     let exe = if url.to_lowercase().ends_with(".tar.gz") {
@@ -371,9 +378,104 @@ fn write_binary(from: &mut impl Read, dir: &Path) -> io::Result<PathBuf> {
     Ok(target)
 }
 
+/// The `.app` bundle `exe` runs from, if any (macOS).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn app_bundle(exe: &Path) -> Option<PathBuf> {
+    let macos = exe.parent()?;
+    let contents = macos.parent()?;
+    let app = contents.parent()?;
+    let fits = macos.file_name()? == "MacOS"
+        && contents.file_name()? == "Contents"
+        && app.extension()? == "app";
+    fits.then(|| app.to_path_buf())
+}
+
+/// Replaces the `app` bundle with the one in `zip_bytes`. It's unpacked
+/// next to `app` first, so the swap is two renames on the same disk, and
+/// the old app is put back if the second fails.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn install_bundle(zip_bytes: &[u8], app: &Path) -> io::Result<()> {
+    let parent = app
+        .parent()
+        .ok_or_else(|| io::Error::other("the app has no folder"))?;
+    let pid = std::process::id();
+    let staging = parent.join(format!(".explorist-update-{pid}"));
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging)?;
+    let result = (|| {
+        let new = extract_bundle(zip_bytes, &staging)?;
+        let name = app.file_name().unwrap_or_default().to_string_lossy();
+        let backup = parent.join(format!(".{name}-old-{pid}"));
+        std::fs::rename(app, &backup)?;
+        if let Err(err) = std::fs::rename(&new, app) {
+            let _ = std::fs::rename(&backup, app);
+            return Err(err);
+        }
+        let _ = std::fs::remove_dir_all(&backup);
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&staging);
+    result
+}
+
+/// Unpacks the `.app` folder in `zip_bytes` into `dir`, keeping file modes
+/// and links, and returns its path.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn extract_bundle(zip_bytes: &[u8], dir: &Path) -> io::Result<PathBuf> {
+    let mut archive = zip::ZipArchive::new(io::Cursor::new(zip_bytes)).map_err(io::Error::other)?;
+    let mut bundle = None;
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).map_err(io::Error::other)?;
+        let Some(relative) = file.enclosed_name() else {
+            continue;
+        };
+        let Some(top) = relative.components().next() else {
+            continue;
+        };
+        let top = Path::new(top.as_os_str());
+        if top.extension().is_none_or(|e| e != "app") {
+            continue;
+        }
+        bundle.get_or_insert_with(|| dir.join(top));
+        let target = dir.join(&relative);
+        let mode = file.unix_mode();
+        if file.is_dir() {
+            std::fs::create_dir_all(&target)?;
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if mode.is_some_and(|m| m & 0o170000 == 0o120000) {
+            let mut link = String::new();
+            file.read_to_string(&mut link)?;
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(link, &target)?;
+            continue;
+        }
+        let mut out = std::fs::File::create(&target)?;
+        io::copy(&mut file, &mut out)?;
+        #[cfg(unix)]
+        if let Some(mode) = mode {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode & 0o7777))?;
+        }
+    }
+    bundle.ok_or_else(|| io::Error::other("the download has no app"))
+}
+
 /// Starts the (updated) program again with the same arguments.
 pub fn restart() -> io::Result<()> {
     let exe = std::env::current_exe()?;
+    // A macOS app is started through Launch Services, like a double-click.
+    #[cfg(target_os = "macos")]
+    if let Some(app) = app_bundle(&exe) {
+        return std::process::Command::new("open")
+            .arg("-n")
+            .arg(app)
+            .spawn()
+            .map(drop);
+    }
     std::process::Command::new(exe)
         .args(std::env::args_os().skip(1))
         .spawn()
@@ -541,5 +643,83 @@ mod tests {
         let (points, more) = note_points("## Hello\nJust text\n", 5);
         assert_eq!(points, ["Just text"]);
         assert!(!more);
+    }
+
+    #[test]
+    fn finds_the_app_bundle() {
+        assert_eq!(
+            app_bundle(Path::new(
+                "/Applications/Explorist.app/Contents/MacOS/explorist"
+            )),
+            Some(PathBuf::from("/Applications/Explorist.app"))
+        );
+        assert_eq!(app_bundle(Path::new("/usr/local/bin/explorist")), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaces_the_whole_app_bundle() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("Explorist.app");
+        std::fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
+        std::fs::write(app.join("Contents/Info.plist"), "old").unwrap();
+        std::fs::write(app.join("Contents/MacOS/explorist"), "old").unwrap();
+        std::fs::write(app.join("Contents/stale.txt"), "gone after").unwrap();
+
+        let mut zip_bytes = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(io::Cursor::new(&mut zip_bytes));
+            let file = zip::write::SimpleFileOptions::default();
+            zip.add_directory("Explorist.app/Contents/MacOS/", file)
+                .unwrap();
+            zip.start_file("Explorist.app/Contents/Info.plist", file)
+                .unwrap();
+            zip.write_all(b"new").unwrap();
+            zip.start_file(
+                "Explorist.app/Contents/MacOS/explorist",
+                file.unix_permissions(0o755),
+            )
+            .unwrap();
+            zip.write_all(b"new program").unwrap();
+            zip.finish().unwrap();
+        }
+
+        install_bundle(&zip_bytes, &app).unwrap();
+        let read = |p: &str| std::fs::read_to_string(app.join(p)).unwrap();
+        assert_eq!(read("Contents/Info.plist"), "new");
+        assert_eq!(read("Contents/MacOS/explorist"), "new program");
+        assert!(!app.join("Contents/stale.txt").exists());
+        let mode = std::fs::metadata(app.join("Contents/MacOS/explorist"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755);
+        // Nothing left over next to the app.
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["Explorist.app"]);
+    }
+
+    #[test]
+    fn a_download_without_an_app_leaves_the_old_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("Explorist.app");
+        std::fs::create_dir_all(&app).unwrap();
+        let mut zip_bytes = Vec::new();
+        {
+            use std::io::Write;
+            let mut zip = zip::ZipWriter::new(io::Cursor::new(&mut zip_bytes));
+            zip.start_file("readme.txt", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"x").unwrap();
+            zip.finish().unwrap();
+        }
+        assert!(install_bundle(&zip_bytes, &app).is_err());
+        assert!(app.exists());
     }
 }
