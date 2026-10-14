@@ -91,6 +91,9 @@ Settings are saved to `%APPDATA%\Explorist\settings.toml`.
    `release-dry-run`. Installed copies offer the update within a day (or on
    *Settings → General → Check now*).
 
+To fix a published release's notes, edit `CHANGELOG.md` and push to the
+`release-notes` branch (`git push origin main:release-notes`).
+
 The update check reads the repository's latest release, so it only finds
 releases while the repository (or a release mirror) is public.
 

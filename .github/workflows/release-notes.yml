@@ -1,0 +1,28 @@
+name: Release notes
+
+# Rewrites an existing release's notes from its CHANGELOG.md section, for
+# fixing notes after publishing: edit CHANGELOG.md, then push to the
+# `release-notes` branch. Uses the version in Cargo.toml.
+on:
+  push:
+    branches: [release-notes]
+
+permissions:
+  contents: write
+
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          awk -v v="$version" '/^## /{on = ($2 == v); next} on' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md has no '## $version' section"
+            exit 1
+          fi
+          gh release edit "v$version" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
