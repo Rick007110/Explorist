@@ -271,8 +271,14 @@ impl ExploristApp {
             )
         });
         self.view.drop_hover = hovering;
+        let dest = self.browser.location().to_path_buf();
+        // Dropping files where they already are (say, dragged out and
+        // back in) does nothing, as in Explorer.
+        let dropped: Vec<PathBuf> = dropped
+            .into_iter()
+            .filter(|p| p.parent() != Some(dest.as_path()))
+            .collect();
         if !dropped.is_empty() {
-            let dest = self.browser.location().to_path_buf();
             self.transfer(TransferKind::Copy, &dropped, &dest, false);
         }
     }

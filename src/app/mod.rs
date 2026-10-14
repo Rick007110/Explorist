@@ -2,6 +2,7 @@
 
 pub mod browser;
 pub mod commands;
+pub mod drag;
 pub mod files;
 pub mod fuzzy;
 pub mod keymap;
@@ -71,6 +72,11 @@ pub struct ViewState {
     pub confirm_delete: Option<Vec<PathBuf>>,
     pub properties: Option<crate::ui::properties::PropertiesState>,
     pub open_with: Option<crate::ui::open_with::OpenWithState>,
+    /// Files being dragged inside the window.
+    pub drag: Option<drag::FileDrag>,
+    /// A drag out of the window ended; the system kept the mouse release,
+    /// so send egui one.
+    pub release_pointer: bool,
     /// Scroll the focused row into view on the next frame.
     pub scroll_to_focus: bool,
     /// Rows that fit in the list, for Page Up / Page Down.
@@ -840,7 +846,25 @@ impl ExploristApp {
 }
 
 impl eframe::App for ExploristApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if std::mem::take(&mut self.view.release_pointer) {
+            let (pos, modifiers) = ctx.input(|i| {
+                (
+                    i.pointer.latest_pos().unwrap_or(egui::Pos2::ZERO),
+                    i.modifiers,
+                )
+            });
+            raw_input.events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers,
+            });
+            raw_input.events.push(egui::Event::PointerGone);
+        }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let palette = self.current_palette(&ctx);
         if palette != self.palette || ctx.cumulative_frame_nr() == 0 {
@@ -888,6 +912,7 @@ impl eframe::App for ExploristApp {
             }
             ui::file_list::show(ui, self);
         }
+        self.finish_drag(&ctx, frame);
 
         let toast_hovered = ui::toast::show(&ctx, self);
         self.expire_toast(&ctx, toast_hovered);

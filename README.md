@@ -25,7 +25,7 @@ Download from the latest release:
 Early development, Windows first. Working: browsing with tabs, sorting
 (per-folder), filtering, inline and batch rename, cut/copy/paste through the
 Windows clipboard, Recycle Bin and undo, background copy/move with progress,
-auto-refresh, a grid view with thumbnails, a preview panel, a command palette, git status, a Settings page
+auto-refresh, a grid view with thumbnails, a preview panel, drag and drop (also out to other apps on Windows and macOS), Properties, Open with, a command palette, git status, a Settings page
 with rebindable shortcuts, and update checks.
 
 ## Keyboard shortcuts
@@ -58,6 +58,7 @@ with rebindable shortcuts, and update checks.
 | Move / extend selection / move focus only | ↑ ↓ PgUp PgDn Home End, with Shift / Ctrl |
 | Toggle the focused item | Ctrl Space |
 | Jump to a name | Start typing |
+| Move / copy by dragging | Drag onto a folder or sidebar place (hold Ctrl, or Option on macOS, to copy) |
 
 Most shortcuts can be changed in Settings → Keyboard.
 

@@ -47,7 +47,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 .cloned();
 
             widgets::section_label(ui, &p, "Favorites");
-            for (i, place) in app.places.iter().enumerate() {
+            let places = app.places.clone();
+            for (i, place) in places.iter().enumerate() {
                 let icon = match place.icon {
                     PlaceIcon::Home => Icon::Home,
                     PlaceIcon::Desktop => Icon::Desktop,
@@ -64,6 +65,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 let (rect, response) =
                     ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
                 paint_row_bg(ui, rect, active, response.hovered(), &p);
+                if app.drop_target(ui, rect, &place.path) {
+                    crate::app::drag::paint_drop_highlight(ui.painter(), &p, rect);
+                }
                 let fg = if active { p.text } else { p.text_2 };
                 let icon_color = if active && icon == Icon::Folder {
                     p.accent
@@ -115,6 +119,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 let (rect, response) =
                     ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
                 paint_row_bg(ui, rect, active, response.hovered(), &p);
+                if app.drop_target(ui, rect, &drive.root) {
+                    crate::app::drag::paint_drop_highlight(ui.painter(), &p, rect);
+                }
                 let fg = if active { p.text } else { p.text_2 };
                 let line_y = if has_bar {
                     rect.top() + 7.0 + 10.0

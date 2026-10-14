@@ -166,7 +166,8 @@ fn tile(
     let Some(entry) = app.browser.rows().get(row).cloned() else {
         return;
     };
-    let (rect, response) = ui.allocate_exact_size(vec2(width, TILE_HEIGHT), Sense::click());
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(width, TILE_HEIGHT), Sense::click_and_drag());
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -186,6 +187,9 @@ fn tile(
     };
     ui.painter()
         .rect_filled(rect, CornerRadius::same(radius::MD), fill);
+    if entry.is_dir && app.drop_target(ui, rect, &entry.path) {
+        crate::app::drag::paint_drop_highlight(ui.painter(), &p, rect);
+    }
     if focused {
         ui.painter().rect_stroke(
             rect,

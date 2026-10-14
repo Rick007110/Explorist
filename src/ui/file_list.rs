@@ -345,7 +345,7 @@ fn draw_row(
         return;
     };
     let (rect, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
+        ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click_and_drag());
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -366,6 +366,10 @@ fn draw_row(
     };
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::same(radius::SM), fill);
+    if entry.is_dir && app.drop_target(ui, rect, &entry.path) {
+        crate::app::drag::paint_drop_highlight(ui.painter(), &p, rect);
+    }
+    let painter = ui.painter();
     if focused {
         painter.rect_stroke(
             rect,
@@ -493,6 +497,9 @@ pub(super) fn handle_clicks(
     renaming: bool,
     commands: &mut Vec<Command>,
 ) {
+    if response.drag_started() && !renaming && app.view.rename.is_none() {
+        app.begin_drag(row, selected);
+    }
     if response.clicked() || response.secondary_clicked() {
         if renaming {
             return;
