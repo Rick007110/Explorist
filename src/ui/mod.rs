@@ -15,5 +15,6 @@ pub mod theme;
 pub mod titlebar;
 pub mod toast;
 pub mod toolbar;
+pub mod update;
 pub mod widgets;
 pub mod window;

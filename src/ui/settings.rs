@@ -69,6 +69,7 @@ struct Changes {
     pin_current: bool,
     unpin: Option<std::path::PathBuf>,
     close: bool,
+    check_updates: bool,
 }
 
 pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
@@ -117,6 +118,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
     }
     if changes.settings {
         app.apply_settings();
+    }
+    if changes.check_updates {
+        app.check_for_updates(true);
     }
     if changes.close {
         app.view.settings_open = false;
@@ -431,6 +435,8 @@ fn general(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mut
             changes.pin_current = true;
         }
     });
+    let checking = app.update.is_checking();
+    let status = update_status(app);
     row(ui, &query, p, rows[3].0, rows[3].1, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
@@ -439,6 +445,18 @@ fn general(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mut
                 egui::RichText::new("Check for updates automatically")
                     .font(text::body())
                     .color(p.text),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 12.0;
+            let label = if checking { "Checking…" } else { "Check now" };
+            if widgets::button(ui, p, label, ButtonStyle::Secondary, None).clicked() && !checking {
+                changes.check_updates = true;
+            }
+            ui.label(
+                egui::RichText::new(status)
+                    .font(crate::ui::fonts::regular(12.0))
+                    .color(p.muted),
             );
         });
     });
@@ -883,6 +901,32 @@ fn advanced(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mu
     if armed {
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(500));
+    }
+}
+
+/// One line about the last update check, for the Updates row.
+fn update_status(app: &ExploristApp) -> String {
+    use crate::update::{CURRENT, CheckResult};
+    let when = app
+        .settings
+        .updates
+        .last_checked
+        .and_then(|t| {
+            std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(t.max(0) as u64))
+        })
+        .map(|t| format::date(t, app.settings.date_format));
+    let result = match &app.update.last_result {
+        Some(CheckResult::Available(r)) => {
+            format!("{} is available (you have {CURRENT})", r.version)
+        }
+        Some(CheckResult::UpToDate) => format!("You have the latest version, {CURRENT}"),
+        Some(CheckResult::NoReleases) => "No releases found yet".to_owned(),
+        Some(CheckResult::Failed(err)) => format!("Couldn’t check: {err}"),
+        None => format!("Version {CURRENT}"),
+    };
+    match when {
+        Some(when) => format!("{result} · last checked {when}"),
+        None => result,
     }
 }
 

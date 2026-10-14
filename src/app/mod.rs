@@ -51,6 +51,7 @@ pub struct ExploristApp {
     pub(crate) tabs: Vec<Option<tabs::TabSlot>>,
     pub(crate) active_tab: usize,
     pub(crate) git: crate::fs::git::GitWatcher,
+    pub(crate) update: crate::ui::update::UpdateState,
     /// The folder contents' generation git last saw, and when.
     git_seen: (u64, Instant),
     git_folder: PathBuf,
@@ -183,6 +184,7 @@ impl ExploristApp {
             tabs: vec![None],
             active_tab: 0,
             git: Default::default(),
+            update: Default::default(),
             git_seen: (u64::MAX, Instant::now()),
             git_folder: PathBuf::new(),
         };
@@ -215,6 +217,7 @@ impl ExploristApp {
                 }
             }
         }
+        app.maybe_check_for_updates();
         if let LoadOutcome::Invalid { error, .. } = outcome {
             app.toast_error(format!(
                 "Settings couldn’t be read, so defaults are in use: {error}"
@@ -828,6 +831,7 @@ impl eframe::App for ExploristApp {
         ui::dialogs::confirm_delete(&ctx, self);
         ui::palette::show(&ctx, self);
         ui::batch_rename::show(&ctx, self);
+        ui::update::show(&ctx, self);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
