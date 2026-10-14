@@ -146,13 +146,15 @@ pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
                             .font(text::caption())
                             .color(p.muted),
                     );
-                    let notes: String = release
-                        .notes
-                        .lines()
-                        .filter(|l| !l.trim().is_empty())
-                        .take(4)
+                    let (points, more) = update::note_points(&release.notes, 5);
+                    let mut notes = points
+                        .iter()
+                        .map(|p| format!("•  {p}"))
                         .collect::<Vec<_>>()
                         .join("\n");
+                    if more {
+                        notes.push_str("\n…and more");
+                    }
                     if !notes.is_empty() && !app.update.installed {
                         ui.add(
                             egui::Label::new(

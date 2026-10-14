@@ -79,7 +79,9 @@ Settings are saved to `%APPDATA%\Explorist\settings.toml`.
 
 ## Releasing
 
-1. Set the new `version` in `Cargo.toml` and commit.
+1. Set the new `version` in `Cargo.toml`, add a `## <version>` section to
+   `CHANGELOG.md` saying what changed for users, and commit. The section
+   becomes the release notes (the release fails without one).
 2. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`, or push the
    commit to the `release` branch (`git push origin main:release`) and the
    workflow creates the tag.

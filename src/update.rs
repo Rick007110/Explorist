@@ -380,6 +380,32 @@ pub fn restart() -> io::Result<()> {
         .map(drop)
 }
 
+/// The release notes as short plain points for the update prompt: the
+/// changelog's bullets without Markdown, at most `limit` of them, and
+/// whether more were left out.
+pub fn note_points(notes: &str, limit: usize) -> (Vec<String>, bool) {
+    let plain = |line: &str| line.replace("**", "").replace('`', "");
+    let bullets: Vec<String> = notes
+        .lines()
+        .map(str::trim)
+        .filter_map(|l| l.strip_prefix("- ").or_else(|| l.strip_prefix("* ")))
+        .map(plain)
+        .collect();
+    let points = if bullets.is_empty() {
+        // Not a changelog: plain lines, skipping headings.
+        notes
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(plain)
+            .collect()
+    } else {
+        bullets
+    };
+    let more = points.len() > limit;
+    (points.into_iter().take(limit).collect(), more)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,5 +530,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let exe = extract_exe(buf.get_ref(), dir.path()).unwrap();
         assert_eq!(std::fs::read(exe).unwrap(), b"MZ fake exe");
+    }
+
+    #[test]
+    fn notes_become_plain_points() {
+        let md = "### New\n- **Grid view** (Ctrl G): tiles.\n- `Open with`\n\n### Fixed\n* Refresh icon\n";
+        let (points, more) = note_points(md, 2);
+        assert_eq!(points, ["Grid view (Ctrl G): tiles.", "Open with"]);
+        assert!(more);
+        let (points, more) = note_points("## Hello\nJust text\n", 5);
+        assert_eq!(points, ["Just text"]);
+        assert!(!more);
     }
 }
