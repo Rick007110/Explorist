@@ -64,7 +64,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
             if !selected.is_empty() {
                 let bytes: u64 = selected.iter().filter_map(|e| e.size).sum();
                 let mut text = format!("{} selected", format::count(selected.len() as u64));
-                if selected.iter().any(|e| !e.is_dir) {
+                if selected.iter().any(|e| e.size.is_some()) {
                     text.push_str(&format!(" · {}", format::size(bytes)));
                 }
                 painter.text(

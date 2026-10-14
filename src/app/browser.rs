@@ -371,6 +371,38 @@ impl Browser {
         self.generation
     }
 
+    /// Everything in the folder, filtered or not.
+    pub fn entries(&self) -> &[Entry] {
+        &self.entries
+    }
+
+    /// Puts worked-out folder sizes into the entries, re-sorting only if
+    /// the list is sorted by size and something changed.
+    pub fn set_folder_sizes(&mut self, sizes: &[(PathBuf, u64)]) {
+        if sizes.is_empty() {
+            return;
+        }
+        let sizes: std::collections::HashMap<&Path, u64> =
+            sizes.iter().map(|(p, b)| (p.as_path(), *b)).collect();
+        let mut changed = false;
+        for entry in self.entries.iter_mut().filter(|e| e.is_dir) {
+            if let Some(&bytes) = sizes.get(entry.path.as_path())
+                && entry.size != Some(bytes)
+            {
+                entry.size = Some(bytes);
+                changed = true;
+            }
+        }
+        if !changed {
+            return;
+        }
+        if self.sort.column == crate::fs::sort::SortColumn::Size {
+            self.resort();
+        } else {
+            self.generation += 1;
+        }
+    }
+
     fn resort(&mut self) {
         self.generation += 1;
         self.sort.sort(&mut self.entries);

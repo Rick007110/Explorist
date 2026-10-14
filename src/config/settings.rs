@@ -41,6 +41,8 @@ pub struct Settings {
     pub show_preview: bool,
     /// Show the folder as a grid of tiles instead of a list (Ctrl G).
     pub grid_view: bool,
+    /// Work out folder sizes for the Size column.
+    pub folder_sizes: bool,
     /// Folders open in tabs when Explorist closed, and which was active.
     pub open_tabs: Vec<PathBuf>,
     pub active_tab: usize,
@@ -80,6 +82,7 @@ impl Default for Settings {
             shortcuts: BTreeMap::new(),
             show_preview: true,
             grid_view: false,
+            folder_sizes: false,
             open_tabs: Vec::new(),
             active_tab: 0,
             git_status: true,
@@ -283,6 +286,7 @@ mod tests {
             shortcuts: BTreeMap::from([("rename".to_owned(), "Ctrl R".to_owned())]),
             show_preview: false,
             grid_view: true,
+            folder_sizes: true,
             open_tabs: vec![PathBuf::from("C:\\Users"), PathBuf::from("D:\\photos")],
             active_tab: 1,
             git_status: false,

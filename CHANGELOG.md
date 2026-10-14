@@ -8,7 +8,8 @@ shows the first points.
 
 ### New
 - **Drive menu**: right-click a drive to open it, open it in a new tab or a terminal, copy its path, see its properties (capacity, free space, file system), eject it (USB sticks, SD cards, discs), or rename it (Windows and macOS).
-- Drives you plug in or eject now appear and disappear on their own.
+- Drives you plug in or eject now appear and disappear on their own, and their free space stays up to date (right after copying or deleting, too).
+- **Folder sizes** (Settings → Sorting & view): the Size column shows how big each folder is. Sizes are worked out in the background on all processor cores, so even big folders fill in fast, and sorting by size includes folders.
 - **Quick Look**: press Space for a large preview of the selected file; the arrow keys move to the next one.
 - **Compress to .zip** and **Extract here** (.zip, .tar, .tar.gz) from the right-click menu, with progress, cancel and undo.
 - **Duplicate** (Ctrl D) makes a copy next to the original.

@@ -7,6 +7,7 @@ pub mod files;
 pub mod fuzzy;
 pub mod keymap;
 pub mod selection;
+pub mod sizes;
 pub mod tabs;
 pub mod undo;
 
@@ -65,6 +66,7 @@ pub struct ExploristApp {
     ),
     /// When the drive list was last read, to notice drives coming and going.
     drives_read: Instant,
+    pub(crate) folder_sizes: sizes::FolderSizes,
 }
 
 /// A background task's outcome, for a toast.
@@ -234,6 +236,7 @@ impl ExploristApp {
             git_folder: PathBuf::new(),
             notices: std::sync::mpsc::channel(),
             drives_read: Instant::now(),
+            folder_sizes: Default::default(),
         };
         // Reopen the other tabs from last time.
         if app.settings.start_in == StartIn::LastFolder && std::env::args_os().nth(1).is_none() {
@@ -375,6 +378,12 @@ impl ExploristApp {
                 ctx.request_repaint();
             })
             .ok();
+    }
+
+    /// Reads the drive list again on the next frame, e.g. after a copy
+    /// changed the free space.
+    pub(crate) fn refresh_drives_soon(&mut self) {
+        self.drives_read = Instant::now() - DRIVE_POLL;
     }
 
     fn poll_background(&mut self, ctx: &egui::Context) {
@@ -594,6 +603,7 @@ impl ExploristApp {
             Command::GoUp => self.browser.go_up(),
             Command::Refresh => {
                 self.browser.refresh();
+                self.folder_sizes.restart = true;
                 refresh_drives(&self.drives, ctx);
             }
             Command::EditPath => {
@@ -1028,6 +1038,7 @@ impl eframe::App for ExploristApp {
             }
         }
         self.poll_job();
+        self.update_folder_sizes();
         self.poll_background(&ctx);
         self.refresh_git(&ctx);
         self.handle_dropped_files(&ctx);

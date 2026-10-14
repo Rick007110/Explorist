@@ -321,6 +321,10 @@ fn section_rows(section: Section) -> Vec<(&'static str, &'static str)> {
                 "Date format",
                 "Applies to the Modified column and status bar.",
             ),
+            (
+                "Folder sizes",
+                "Show how big each folder is in the Size column. Worked out in the background.",
+            ),
         ],
         Section::Keyboard => vec![(
             "Keyboard shortcuts",
@@ -701,6 +705,9 @@ fn sorting(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mut
         if let Some(i) = widgets::segmented(ui, p, &labels, selected) {
             s.date_format = DateFormat::ALL[i];
         }
+    });
+    row(ui, &query, p, rows[4].0, rows[4].1, |ui| {
+        widgets::switch(ui, p, &mut s.folder_sizes);
     });
     commit(app, s, changes);
 }

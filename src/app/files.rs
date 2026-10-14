@@ -194,6 +194,8 @@ impl ExploristApp {
     }
 
     fn finish_job(&mut self, running: RunningJob, outcome: Outcome) {
+        // Free space changed.
+        self.refresh_drives_soon();
         let here = self.browser.location().to_path_buf();
         let inside = |p: &Path| p.parent() == Some(here.as_path());
 

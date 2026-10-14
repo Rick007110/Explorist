@@ -475,7 +475,18 @@ fn draw_row(
                 .on_hover_text(state.describe());
         }
 
+        // Folders: the worked-out size, or while counting the last one
+        // known (or the count so far), dimmed.
         let (size_text, f, c) = meta(entry.size.map_or_else(|| "—".to_owned(), format::size));
+        let (size_text, c) = match entry.size {
+            None if entry.is_dir && app.settings.folder_sizes => {
+                match app.folder_sizes.provisional(&entry.path) {
+                    Some(bytes) => (format::size(bytes), p.faint),
+                    None => ("…".to_owned(), p.faint),
+                }
+            }
+            _ => (size_text, c),
+        };
         let g = ui.painter().layout_no_wrap(size_text, f, c);
         widgets::paint_aligned(ui.painter(), size_cell, g, Align2::RIGHT_CENTER, c);
         let date_format = app.settings.date_format;

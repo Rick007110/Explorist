@@ -5,6 +5,7 @@
 pub mod archive;
 pub mod batch;
 pub mod clipboard;
+pub mod dirsize;
 pub mod entry;
 pub mod filter;
 pub mod format;
