@@ -577,6 +577,12 @@ impl ExploristApp {
                 self.settings.show_preview = !self.settings.show_preview;
                 self.save_settings();
             }
+            Command::OpenAsAdmin => {
+                #[cfg(windows)]
+                if let Err(err) = crate::fs::shell::open_as_admin(self.browser.location()) {
+                    self.toast(format!("Couldn’t open as administrator: {err}"), true);
+                }
+            }
             Command::OpenWith => {
                 let files: Vec<PathBuf> = self
                     .browser

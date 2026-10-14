@@ -1265,9 +1265,15 @@ fn error_state(
     let (title, body) = match err.kind {
         ListErrorKind::AccessDenied => (
             "You don’t have access to this folder".to_owned(),
-            format!(
-                "Windows blocked reading “{name}”. It may be managed by the system or need administrator rights."
-            ),
+            if cfg!(windows) {
+                format!(
+                    "Windows blocked reading “{name}”. It may be managed by the system or need administrator rights."
+                )
+            } else {
+                format!(
+                    "You don’t have permission to read “{name}”. Its owner or an administrator can change that."
+                )
+            },
         ),
         ListErrorKind::NotFound => (
             "This folder doesn’t exist".to_owned(),
@@ -1287,6 +1293,7 @@ fn error_state(
         code
     );
     let can_back = app.browser.can_go_back();
+    let elevate = err.kind == ListErrorKind::AccessDenied && crate::fs::shell::CAN_ELEVATE;
     let icon = if err.kind == ListErrorKind::AccessDenied {
         Icon::Lock
     } else {
@@ -1303,7 +1310,16 @@ fn error_state(
             .galley(rect.min + vec2(8.0, 2.0), chip, p.muted);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            let mut total = widgets::button_width(ui, &p, "Try again", ButtonStyle::Primary, None);
+            let retry = if elevate {
+                "Retry as administrator"
+            } else {
+                "Try again"
+            };
+            let mut total = widgets::button_width(ui, &p, retry, ButtonStyle::Primary, None);
+            if elevate {
+                total +=
+                    8.0 + widgets::button_width(ui, &p, "Try again", ButtonStyle::Secondary, None);
+            }
             if can_back {
                 total += 8.0
                     + widgets::button_width(
@@ -1315,7 +1331,16 @@ fn error_state(
                     );
             }
             ui.add_space(((ui.available_width() - total) / 2.0).max(0.0));
-            if widgets::button(ui, &p, "Try again", ButtonStyle::Primary, None).clicked() {
+            if widgets::button(ui, &p, retry, ButtonStyle::Primary, None).clicked() {
+                if elevate {
+                    commands.push(Command::OpenAsAdmin);
+                } else {
+                    commands.push(Command::Refresh);
+                }
+            }
+            if elevate
+                && widgets::button(ui, &p, "Try again", ButtonStyle::Secondary, None).clicked()
+            {
                 commands.push(Command::Refresh);
             }
             if can_back

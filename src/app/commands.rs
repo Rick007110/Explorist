@@ -41,6 +41,8 @@ pub enum Command {
     /// Add the selected folder to Favorites.
     PinFolder,
     TogglePreview,
+    /// Reopen the folder in a new window with administrator rights.
+    OpenAsAdmin,
     /// Pick an app to open the selected files in.
     OpenWith,
     /// Size, dates and attributes of the selection or the folder.
@@ -106,6 +108,7 @@ impl Command {
             Self::ToggleGrid => "Toggle grid view",
             Self::Properties => "Properties",
             Self::OpenWith => "Open with…",
+            Self::OpenAsAdmin => "Open as administrator",
             Self::CommandPalette => "Command palette",
             Self::BatchRename => "Batch rename…",
             Self::NewTab => "New tab",
