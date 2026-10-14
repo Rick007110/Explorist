@@ -7,18 +7,23 @@ builds too, written in Rust with [egui](https://github.com/emilk/egui).
 
 Download from the latest release:
 
-- **Windows:** `explorist-<version>-windows-x86_64.zip`. Unzip and run
-  `explorist.exe`. Windows SmartScreen may warn because the build isn't
-  signed; choose *More info → Run anyway*.
+- **Windows:** `explorist-<version>-windows-x86_64-setup.exe`. It installs
+  for your user only (no administrator prompt) and adds Explorist to the
+  Start menu, with an uninstaller in Settings → Apps. Windows SmartScreen
+  may warn because the installer isn't code-signed; choose *More info → Run
+  anyway*. A portable `.zip` is there too.
 - **Linux:** `explorist-<version>-linux-x86_64.tar.gz`. Unpack and run
   `explorist` (X11 or Wayland). To add it to your app menu, copy
   `explorist` to `~/.local/bin`, `explorist.png` to
   `~/.local/share/icons/` and `explorist.desktop` to
   `~/.local/share/applications/`.
-- **macOS:** `explorist-<version>-macos-universal.zip` (Apple Silicon and
-  Intel). Unzip and move `Explorist.app` to Applications. The app isn't
+- **macOS:** `explorist-<version>-macos-universal.dmg` (Apple Silicon and
+  Intel). Open it and drag Explorist to Applications. The app isn't
   notarized, so the first time right-click it and choose *Open*, or run
   `xattr -dr com.apple.quarantine /Applications/Explorist.app`.
+
+The `.zip` and `.tar.gz` files are also what the built-in updater
+downloads.
 
 ## Status
 
@@ -78,8 +83,10 @@ Settings are saved to `%APPDATA%\Explorist\settings.toml`.
 2. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`, or push the
    commit to the `release` branch (`git push origin main:release`) and the
    workflow creates the tag.
-3. The Release workflow builds Windows, Linux and macOS packages and
-   publishes them in one GitHub Release. Installed copies offer the update within a day (or on
+3. The Release workflow builds the Windows installer and zip, the macOS
+   disk image and zip, and the Linux tarball, and publishes them in one
+   GitHub Release. To try packaging changes without publishing, push to
+   `release-dry-run`. Installed copies offer the update within a day (or on
    *Settings → General → Check now*).
 
 The update check reads the repository's latest release, so it only finds
