@@ -4,6 +4,11 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
+## 0.3.1
+
+### Fixed
+- Backspace in a search or text field went back to the previous folder instead of deleting a character.
+
 ## 0.3.0
 
 ### New

@@ -112,6 +112,30 @@ const TABLE: &[(Mods, Key, Command)] = &[
     (Mods::CTRL_SHIFT, Key::Tab, Command::PreviousTab),
 ];
 
+/// Whether a shortcut may run while a text field has focus: only commands
+/// meant to (like Alt ← or Ctrl L), and only on a chord with Ctrl, Alt or
+/// ⌘, or a function key. Plain keys such as Backspace, Delete, Enter,
+/// Space and letters always belong to the field.
+pub fn allowed_while_typing(command: Command, mods: Mods, key: Key) -> bool {
+    let chord = mods.ctrl || mods.alt;
+    let function_key = matches!(
+        key,
+        Key::F1
+            | Key::F2
+            | Key::F3
+            | Key::F4
+            | Key::F5
+            | Key::F6
+            | Key::F7
+            | Key::F8
+            | Key::F9
+            | Key::F10
+            | Key::F11
+            | Key::F12
+    );
+    command.works_while_typing() && (chord || function_key)
+}
+
 /// Arrow-style keys, each in three flavors: plain moves the selection,
 /// Shift extends it, Ctrl moves focus only.
 const MOVES: [(Key, MoveTarget); 8] = [
@@ -561,5 +585,33 @@ mod tests {
             shortcut_label(Command::JumpToPlace(2)).as_deref(),
             Some("Alt 3")
         );
+    }
+
+    #[test]
+    fn plain_keys_belong_to_text_fields() {
+        // Backspace means Back in the list, but deletes text in a field.
+        assert!(!allowed_while_typing(
+            Command::GoBack,
+            Mods::NONE,
+            Key::Backspace
+        ));
+        assert!(allowed_while_typing(
+            Command::GoBack,
+            Mods::ALT,
+            Key::ArrowLeft
+        ));
+        assert!(allowed_while_typing(Command::Refresh, Mods::NONE, Key::F5));
+        assert!(allowed_while_typing(Command::EditPath, Mods::CTRL, Key::L));
+        // Commands not meant for typing never run, chord or not.
+        assert!(!allowed_while_typing(
+            Command::Trash,
+            Mods::NONE,
+            Key::Delete
+        ));
+        assert!(!allowed_while_typing(
+            Command::SelectAll,
+            Mods::CTRL,
+            Key::A
+        ));
     }
 }

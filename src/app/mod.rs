@@ -492,7 +492,9 @@ impl ExploristApp {
                     let Some(command) = keymap::lookup(Mods::from_egui(*modifiers), *key) else {
                         continue;
                     };
-                    if typing && !command.works_while_typing() {
+                    if typing
+                        && !keymap::allowed_while_typing(command, Mods::from_egui(*modifiers), *key)
+                    {
                         continue;
                     }
                     consumed.push(index);
