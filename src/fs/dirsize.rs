@@ -141,10 +141,10 @@ impl FolderSizer {
 
     /// Finished folders and their sizes.
     pub fn finished(&self) -> impl Iterator<Item = (&Path, u64)> {
-        self.index.iter().filter_map(|(path, &i)| {
-            (self.shared.pending[i].load(Ordering::Acquire) == 0)
-                .then(|| (path.as_path(), self.shared.bytes[i].load(Ordering::Relaxed)))
-        })
+        self.index
+            .iter()
+            .filter(|&(_, &i)| self.shared.pending[i].load(Ordering::Acquire) == 0)
+            .map(|(path, &i)| (path.as_path(), self.shared.bytes[i].load(Ordering::Relaxed)))
     }
 }
 
