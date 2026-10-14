@@ -98,6 +98,7 @@ const TABLE: &[(Mods, Key, Command)] = &[
     (Mods::CTRL, Key::Space, Command::ToggleFocused),
     (Mods::CTRL, Key::Comma, Command::OpenSettings),
     (Mods::CTRL, Key::Period, Command::TogglePreview),
+    (Mods::CTRL, Key::G, Command::ToggleGrid),
     (Mods::CTRL, Key::P, Command::CommandPalette),
     (Mods::CTRL, Key::E, Command::RecentPlaces),
     (Mods::CTRL, Key::T, Command::NewTab),
@@ -108,13 +109,15 @@ const TABLE: &[(Mods, Key, Command)] = &[
 
 /// Arrow-style keys, each in three flavors: plain moves the selection,
 /// Shift extends it, Ctrl moves focus only.
-const MOVES: [(Key, MoveTarget); 6] = [
+const MOVES: [(Key, MoveTarget); 8] = [
     (Key::ArrowUp, MoveTarget::Up),
     (Key::ArrowDown, MoveTarget::Down),
     (Key::PageUp, MoveTarget::PageUp),
     (Key::PageDown, MoveTarget::PageDown),
     (Key::Home, MoveTarget::First),
     (Key::End, MoveTarget::Last),
+    (Key::ArrowLeft, MoveTarget::Left),
+    (Key::ArrowRight, MoveTarget::Right),
 ];
 
 /// Bindings in effect: the defaults with the user's overrides applied.

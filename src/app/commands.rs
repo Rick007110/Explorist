@@ -41,6 +41,8 @@ pub enum Command {
     /// Add the selected folder to Favorites.
     PinFolder,
     TogglePreview,
+    /// Switch between the list and the grid of tiles.
+    ToggleGrid,
     CommandPalette,
     BatchRename,
     NewTab,
@@ -61,6 +63,9 @@ pub enum MoveTarget {
     PageDown,
     First,
     Last,
+    /// Sideways, in the grid.
+    Left,
+    Right,
 }
 
 impl Command {
@@ -94,6 +99,7 @@ impl Command {
             Self::OpenSettings => "Settings",
             Self::PinFolder => "Pin to Favorites",
             Self::TogglePreview => "Toggle preview panel",
+            Self::ToggleGrid => "Toggle grid view",
             Self::CommandPalette => "Command palette",
             Self::BatchRename => "Batch rename…",
             Self::NewTab => "New tab",
@@ -126,6 +132,7 @@ impl Command {
             Self::OpenTerminal => "open_terminal",
             Self::OpenSettings => "open_settings",
             Self::TogglePreview => "toggle_preview",
+            Self::ToggleGrid => "toggle_grid",
             Self::CommandPalette => "command_palette",
             Self::BatchRename => "batch_rename",
             Self::NewTab => "new_tab",
@@ -140,7 +147,7 @@ impl Command {
     }
 
     /// Commands listed on the Keyboard settings page, in order.
-    pub const CUSTOMIZABLE: [Command; 24] = [
+    pub const CUSTOMIZABLE: [Command; 25] = [
         Command::CommandPalette,
         Command::RecentPlaces,
         Command::EditPath,
@@ -160,6 +167,7 @@ impl Command {
         Command::Open,
         Command::OpenTerminal,
         Command::TogglePreview,
+        Command::ToggleGrid,
         Command::NewTab,
         Command::CloseTab,
         Command::NextTab,
@@ -168,7 +176,7 @@ impl Command {
     ];
 
     /// Commands offered in the palette, in order of usefulness.
-    pub const PALETTE: [Command; 28] = [
+    pub const PALETTE: [Command; 29] = [
         Command::Open,
         Command::Rename,
         Command::BatchRename,
@@ -186,6 +194,7 @@ impl Command {
         Command::EditPath,
         Command::ToggleHidden,
         Command::TogglePreview,
+        Command::ToggleGrid,
         Command::Refresh,
         Command::GoBack,
         Command::GoForward,
@@ -232,6 +241,7 @@ impl Command {
                 | Self::Filter
                 | Self::ToggleHidden
                 | Self::TogglePreview
+                | Self::ToggleGrid
                 | Self::CommandPalette
                 | Self::RecentPlaces
                 | Self::NewTab

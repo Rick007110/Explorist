@@ -25,7 +25,7 @@ Download from the latest release:
 Early development, Windows first. Working: browsing with tabs, sorting
 (per-folder), filtering, inline and batch rename, cut/copy/paste through the
 Windows clipboard, Recycle Bin and undo, background copy/move with progress,
-auto-refresh, a preview panel, a command palette, git status, a Settings page
+auto-refresh, a grid view with thumbnails, a preview panel, a command palette, git status, a Settings page
 with rebindable shortcuts, and update checks.
 
 ## Keyboard shortcuts
@@ -48,6 +48,7 @@ with rebindable shortcuts, and update checks.
 | Select all | Ctrl A |
 | Show hidden files | Ctrl H |
 | Preview panel | Ctrl . |
+| List / grid view | Ctrl G |
 | New tab / close tab / next tab | Ctrl T / Ctrl W / Ctrl Tab |
 | Open terminal here | Ctrl \` |
 | Refresh | F5 or Ctrl R |

@@ -39,6 +39,8 @@ pub struct Settings {
     pub shortcuts: BTreeMap<String, String>,
     /// The preview panel is open (Ctrl .).
     pub show_preview: bool,
+    /// Show the folder as a grid of tiles instead of a list (Ctrl G).
+    pub grid_view: bool,
     /// Folders open in tabs when Explorist closed, and which was active.
     pub open_tabs: Vec<PathBuf>,
     pub active_tab: usize,
@@ -77,6 +79,7 @@ impl Default for Settings {
             folder_sorts: BTreeMap::new(),
             shortcuts: BTreeMap::new(),
             show_preview: true,
+            grid_view: false,
             open_tabs: Vec::new(),
             active_tab: 0,
             git_status: true,
@@ -279,6 +282,7 @@ mod tests {
             )]),
             shortcuts: BTreeMap::from([("rename".to_owned(), "Ctrl R".to_owned())]),
             show_preview: false,
+            grid_view: true,
             open_tabs: vec![PathBuf::from("C:\\Users"), PathBuf::from("D:\\photos")],
             active_tab: 1,
             git_status: false,

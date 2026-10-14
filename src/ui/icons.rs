@@ -40,6 +40,8 @@ pub enum Icon {
     Warning,
     PreviewPanel,
     Branch,
+    Grid,
+    List,
     // Places
     Home,
     Desktop,
@@ -75,6 +77,19 @@ impl Icon {
 
 /// Draws `icon` centered in `rect` at `size` points.
 pub fn paint(painter: &Painter, rect: Rect, icon: Icon, size: f32, color: Color32) {
+    paint_stroked(painter, rect, icon, size, 1.5 * size / 16.0, color);
+}
+
+/// Like [`paint`], with a set line width, for big icons that would look
+/// heavy with lines scaled up.
+pub fn paint_stroked(
+    painter: &Painter,
+    rect: Rect,
+    icon: Icon,
+    size: f32,
+    width: f32,
+    color: Color32,
+) {
     let grid = match icon {
         Icon::Minimize | Icon::Maximize | Icon::Restore | Icon::CloseWindow => 10.0,
         _ => 16.0,
@@ -84,7 +99,7 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, size: f32, color: Color3
         painter,
         origin,
         scale: size / grid,
-        stroke: Stroke::new(1.5 * size / 16.0, color),
+        stroke: Stroke::new(width, color),
         shapes: Vec::new(),
     };
     draw(pen, icon);
@@ -331,6 +346,20 @@ fn draw(mut pen: Pen<'_>, icon: Icon) {
                 })
                 .collect();
             pen.line(&curve);
+        }
+        Icon::Grid => {
+            pen.rect(2.5, 2.5, 4.5, 4.5, 1.0);
+            pen.rect(9.0, 2.5, 4.5, 4.5, 1.0);
+            pen.rect(2.5, 9.0, 4.5, 4.5, 1.0);
+            pen.rect(9.0, 9.0, 4.5, 4.5, 1.0);
+        }
+        Icon::List => {
+            pen.line(&[(5.5, 4.0), (13.5, 4.0)]);
+            pen.line(&[(5.5, 8.0), (13.5, 8.0)]);
+            pen.line(&[(5.5, 12.0), (13.5, 12.0)]);
+            pen.line(&[(2.5, 4.0), (3.0, 4.0)]);
+            pen.line(&[(2.5, 8.0), (3.0, 8.0)]);
+            pen.line(&[(2.5, 12.0), (3.0, 12.0)]);
         }
         Icon::PreviewPanel => {
             pen.rect(2.0, 2.5, 12.0, 11.0, 1.5);

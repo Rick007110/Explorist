@@ -59,7 +59,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 ui.add_space(10.0);
 
                 // Path bar takes what's left after the right-hand buttons.
-                let right_width = 4.0 * size::BUTTON + 3.0 * 2.0;
+                let right_width = 5.0 * size::BUTTON + 4.0 * 2.0;
                 let width = (ui.available_width() - right_width - 10.0).max(120.0);
                 path_bar(ui, app, width);
 
@@ -81,6 +81,19 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                     } else {
                         app.run(&ctx, Command::Filter);
                     }
+                }
+                let grid = app.settings.grid_view;
+                let (icon, tip) = if grid {
+                    (Icon::List, "Show as list")
+                } else {
+                    (Icon::Grid, "Show as grid")
+                };
+                let tip = match keymap::shortcut_label(Command::ToggleGrid) {
+                    Some(keys) => format!("{tip} ({keys})"),
+                    None => tip.to_owned(),
+                };
+                if widgets::icon_button(ui, &p, icon, &tip, true, false).clicked() {
+                    app.run(&ctx, Command::ToggleGrid);
                 }
                 let preview_on = app.settings.show_preview;
                 if widgets::icon_button(

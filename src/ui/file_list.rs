@@ -44,7 +44,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 LoadState::Failed(err) => error_state(ui, app, &err, &mut commands),
                 state => {
                     let loading = matches!(state, LoadState::Loading { .. });
-                    header(ui, app);
+                    let grid = app.settings.grid_view;
+                    if grid {
+                        sort_bar(ui, app);
+                    } else {
+                        header(ui, app);
+                    }
                     if loading {
                         progress_line(ui, &p, app.reduce_motion());
                     }
@@ -56,7 +61,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                         } else {
                             empty_state(ui, app, &mut commands);
                         }
+                    } else if grid {
+                        crate::ui::grid::tiles(ui, app, &mut commands);
                     } else {
+                        app.view.columns = 1;
                         rows(ui, app, &mut commands);
                     }
                 }
@@ -175,6 +183,76 @@ fn header(ui: &mut egui::Ui, app: &mut ExploristApp) {
         if response.clicked() {
             app.sort_by(column);
         }
+    }
+}
+
+/// The grid has no columns to click, so its header is a row of sort
+/// choices instead.
+fn sort_bar(ui: &mut egui::Ui, app: &mut ExploristApp) {
+    let p = app.palette;
+    let (full, _) = ui.allocate_exact_size(
+        vec2(ui.available_width(), size::COLUMN_HEADER),
+        Sense::hover(),
+    );
+    let rect = full.shrink2(vec2(SIDE, 0.0));
+    ui.painter().hline(
+        rect.x_range(),
+        rect.bottom() - 0.5,
+        Stroke::new(1.0, p.border_subtle),
+    );
+    let y = rect.center().y;
+    let label = ui.painter().text(
+        Pos2::new(rect.left() + PAD_LEFT, y),
+        Align2::LEFT_CENTER,
+        "Sort by",
+        crate::ui::fonts::regular(12.0),
+        p.faint,
+    );
+    let sort = app.browser.sort();
+    let mut x = label.right() + 12.0;
+    for (name, column) in [
+        ("Name", SortColumn::Name),
+        ("Size", SortColumn::Size),
+        ("Modified", SortColumn::Modified),
+        ("Type", SortColumn::Type),
+    ] {
+        let active = sort.column == column;
+        let font = if active {
+            text::label()
+        } else {
+            crate::ui::fonts::regular(12.0)
+        };
+        let galley = ui.painter().layout_no_wrap(name.to_owned(), font, p.muted);
+        let width = galley.size().x + if active { 16.0 } else { 0.0 };
+        let cell = Rect::from_min_size(
+            Pos2::new(x - 6.0, rect.top() + 4.0),
+            vec2(width + 12.0, rect.height() - 8.0),
+        );
+        let response = ui.interact(cell, ui.id().with(("sort", name)), Sense::click());
+        if response.hovered() {
+            ui.painter()
+                .rect_filled(cell, CornerRadius::same(radius::SM), p.hover);
+        }
+        let color = if active || response.hovered() {
+            p.text_2
+        } else {
+            p.muted
+        };
+        let text_w = galley.size().x;
+        ui.painter()
+            .galley(Pos2::new(x, y - galley.size().y / 2.0), galley, color);
+        if active {
+            let icon = match sort.direction {
+                SortDirection::Ascending => Icon::SortUp,
+                SortDirection::Descending => Icon::SortDown,
+            };
+            let r = Rect::from_center_size(Pos2::new(x + text_w + 10.0, y), vec2(12.0, 12.0));
+            icons::paint(ui.painter(), r, icon, 12.0, p.text_2);
+        }
+        if response.clicked() {
+            app.sort_by(column);
+        }
+        x += width + 18.0;
     }
 }
 
@@ -398,7 +476,23 @@ fn draw_row(
         widgets::paint_aligned(ui.painter(), type_cell, g, Align2::LEFT_CENTER, p.muted);
     }
 
-    // Selection.
+    handle_clicks(
+        ui, app, &response, &entry, row, selected, renaming, commands,
+    );
+}
+
+/// Selection, opening, and the context menu, for a row or a tile.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn handle_clicks(
+    ui: &egui::Ui,
+    app: &mut ExploristApp,
+    response: &egui::Response,
+    entry: &crate::fs::entry::Entry,
+    row: usize,
+    selected: bool,
+    renaming: bool,
+    commands: &mut Vec<Command>,
+) {
     if response.clicked() || response.secondary_clicked() {
         if renaming {
             return;
@@ -431,7 +525,7 @@ fn draw_row(
     response.context_menu(|ui| row_menu(ui, app, commands));
 }
 
-fn rename_field(
+pub(super) fn rename_field(
     ui: &mut egui::Ui,
     app: &mut ExploristApp,
     rect: Rect,
@@ -563,7 +657,11 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
     }
 }
 
-fn background_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Command>) {
+pub(super) fn background_menu(
+    ui: &mut egui::Ui,
+    app: &mut ExploristApp,
+    commands: &mut Vec<Command>,
+) {
     let p = app.palette;
     menu::style(ui);
     let can_paste = crate::fs::clipboard::read().is_some_and(|c| !c.paths.is_empty());

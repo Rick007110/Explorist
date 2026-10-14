@@ -4,6 +4,7 @@ pub mod batch_rename;
 pub mod dialogs;
 pub mod file_list;
 pub mod fonts;
+pub mod grid;
 pub mod icons;
 pub mod menu;
 pub mod palette;

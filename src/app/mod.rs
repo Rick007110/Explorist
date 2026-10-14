@@ -56,6 +56,7 @@ pub struct ExploristApp {
     git_seen: (u64, Instant),
     git_folder: PathBuf,
     pub(crate) preview_image: Option<ui::preview::PreviewImage>,
+    pub(crate) thumbs: ui::grid::ThumbCache,
 }
 
 /// Transient UI state: what's open, being edited or shown.
@@ -72,6 +73,8 @@ pub struct ViewState {
     pub scroll_to_focus: bool,
     /// Rows that fit in the list, for Page Up / Page Down.
     pub page_rows: usize,
+    /// Tiles per line in the grid; 1 in the list.
+    pub columns: usize,
     /// The list's scroll offset and height last frame.
     pub list_offset: f32,
     pub list_height: f32,
@@ -186,6 +189,7 @@ impl ExploristApp {
             job: None,
             preview: Default::default(),
             preview_image: None,
+            thumbs: Default::default(),
             recent: Vec::new(),
             tabs: vec![None],
             active_tab: 0,
@@ -569,6 +573,11 @@ impl ExploristApp {
                 self.settings.show_preview = !self.settings.show_preview;
                 self.save_settings();
             }
+            Command::ToggleGrid => {
+                self.settings.grid_view = !self.settings.grid_view;
+                self.view.scroll_to_focus = true;
+                self.save_settings();
+            }
             Command::PinFolder => {
                 let folders: Vec<PathBuf> = self
                     .browser
@@ -607,10 +616,17 @@ impl ExploristApp {
     }
 
     fn move_focus(&mut self, target: MoveTarget, mode: MoveMode) {
-        let page = self.view.page_rows.max(1) as isize;
+        // In the grid, up and down jump a whole line of tiles.
+        let columns = self.view.columns.max(1) as isize;
+        let page = self.view.page_rows.max(1) as isize * columns;
+        if matches!(target, MoveTarget::Left | MoveTarget::Right) && columns == 1 {
+            return;
+        }
         self.browser.select(|sel, rows| match target {
-            MoveTarget::Up => sel.move_by(rows, -1, mode),
-            MoveTarget::Down => sel.move_by(rows, 1, mode),
+            MoveTarget::Up => sel.move_by(rows, -columns, mode),
+            MoveTarget::Down => sel.move_by(rows, columns, mode),
+            MoveTarget::Left => sel.move_by(rows, -1, mode),
+            MoveTarget::Right => sel.move_by(rows, 1, mode),
             MoveTarget::PageUp => sel.move_by(rows, -page, mode),
             MoveTarget::PageDown => sel.move_by(rows, page, mode),
             MoveTarget::First => sel.move_to(rows, 0, mode),
