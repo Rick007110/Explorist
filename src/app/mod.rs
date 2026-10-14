@@ -594,7 +594,7 @@ impl ExploristApp {
         } else if self.view.filter_open {
             self.view.filter_open = false;
             self.view.filter_text.clear();
-            self.browser.set_filter_query("");
+            self.browser.clear_filter();
         } else {
             self.browser.select(|sel, _| sel.clear());
         }

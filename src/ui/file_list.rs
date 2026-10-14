@@ -681,10 +681,11 @@ fn filter_bar(ui: &mut egui::Ui, app: &mut ExploristApp) {
         app.view.scroll_to_focus = true;
     }
 
-    // "3 of 14" and Clear on the right.
+    // "3 of 14" and Clear all on the right.
+    let clear_w = 72.0;
     let clear_rect = Rect::from_min_size(
-        Pos2::new(bar.right() - 16.0 - 52.0, bar.center().y - 14.0),
-        vec2(52.0, 28.0),
+        Pos2::new(bar.right() - 16.0 - clear_w, bar.center().y - 14.0),
+        vec2(clear_w, 28.0),
     );
     let clear = ui.interact(clear_rect, ui.id().with("filter-clear"), Sense::click());
     if clear.hovered() {
@@ -694,13 +695,13 @@ fn filter_bar(ui: &mut egui::Ui, app: &mut ExploristApp) {
     ui.painter().text(
         clear_rect.center(),
         Align2::CENTER_CENTER,
-        "Clear",
+        "Clear all",
         crate::ui::fonts::medium(12.5),
         p.text_2,
     );
     if clear.clicked() {
         app.view.filter_text.clear();
-        app.browser.set_filter_query("");
+        app.browser.clear_filter();
         app.view.focus_filter = true;
     }
     let counts = format!(
@@ -708,13 +709,250 @@ fn filter_bar(ui: &mut egui::Ui, app: &mut ExploristApp) {
         format::count(app.browser.rows().len() as u64),
         format::count(app.browser.shown_total() as u64)
     );
-    ui.painter().text(
+    let counts_rect = ui.painter().text(
         Pos2::new(clear_rect.left() - 8.0, bar.center().y),
         Align2::RIGHT_CENTER,
         counts,
         crate::ui::fonts::mono(12.0),
         p.text_2,
     );
+
+    // Chips between the field and the counts.
+    let area = Rect::from_min_max(
+        Pos2::new(input.right() + 8.0, bar.top()),
+        Pos2::new(counts_rect.left() - 12.0, bar.bottom()),
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(area)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    child.set_clip_rect(area);
+    child.spacing_mut().item_spacing.x = 8.0;
+    filter_chips(&mut child, app);
+}
+
+/// The Type, Size and Modified chips, and "Add filter".
+fn filter_chips(ui: &mut egui::Ui, app: &mut ExploristApp) {
+    use crate::fs::filter::{Recency, SizeRule};
+    let p = app.palette;
+    let filter = app.browser.filter().clone();
+
+    if !filter.types.is_empty() {
+        let value = filter.types.join(", ");
+        let (body, remove) = chip(ui, &p, "Type", &value, false);
+        egui::Popup::menu(&body)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| type_menu(ui, app));
+        if remove {
+            app.browser.edit_filter(|f| f.types.clear());
+        }
+    }
+    if let Some(rule) = filter.size {
+        let value = format!(
+            "{} {}",
+            if rule.at_least { ">" } else { "<" },
+            format::size(rule.bytes)
+        );
+        let (body, remove) = chip(ui, &p, "Size", &value, true);
+        egui::Popup::menu(&body)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| size_menu(ui, app));
+        if remove {
+            app.browser.edit_filter(|f| f.size = None);
+        }
+    }
+    if let Some(recency) = filter.modified {
+        let (body, remove) = chip(ui, &p, "Modified", recency.label(), false);
+        egui::Popup::menu(&body).show(|ui| {
+            menu::style(ui);
+            for r in Recency::ALL {
+                if menu::plain_item(ui, &p, r.label()) {
+                    app.browser.edit_filter(|f| f.modified = Some(r));
+                }
+            }
+        });
+        if remove {
+            app.browser.edit_filter(|f| f.modified = None);
+        }
+    }
+
+    // "Add filter" offers the chips not shown yet.
+    let add = widgets::button(ui, &p, "+ Add filter", ButtonStyle::Ghost, None);
+    egui::Popup::menu(&add).show(|ui| {
+        menu::style(ui);
+        if filter.types.is_empty() && menu::plain_item(ui, &p, "Type") {
+            // Start with the focused item's type, else the most common one.
+            let focused = app
+                .browser
+                .selection
+                .focus()
+                .and_then(|f| app.browser.rows().position(f))
+                .and_then(|r| app.browser.rows().get(r))
+                .map(|e| e.type_label.to_string());
+            let first =
+                focused.or_else(|| app.browser.type_counts().first().map(|(t, _)| t.clone()));
+            if let Some(t) = first {
+                app.browser.edit_filter(|f| f.types = vec![t]);
+            }
+        }
+        if filter.size.is_none() && menu::plain_item(ui, &p, "Size") {
+            app.browser.edit_filter(|f| {
+                f.size = Some(SizeRule {
+                    at_least: true,
+                    bytes: 1024 * 1024,
+                })
+            });
+        }
+        if filter.modified.is_none() && menu::plain_item(ui, &p, "Modified") {
+            app.browser
+                .edit_filter(|f| f.modified = Some(Recency::LastWeek));
+        }
+    });
+}
+
+/// A filter chip: muted name, value, and a remove button. Returns the
+/// body's response (click to edit) and whether × was clicked.
+fn chip(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    name: &str,
+    value: &str,
+    mono: bool,
+) -> (egui::Response, bool) {
+    let name_g =
+        ui.painter()
+            .layout_no_wrap(name.to_owned(), crate::ui::fonts::regular(12.5), p.muted);
+    let value_font = if mono {
+        crate::ui::fonts::mono(12.0)
+    } else {
+        crate::ui::fonts::regular(12.5)
+    };
+    let value_g = widgets::truncated(ui, value, value_font, p.text, 220.0);
+    let width = 10.0 + name_g.size().x + 6.0 + value_g.size().x + 6.0 + 20.0 + 4.0;
+    let (rect, body) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
+    ui.painter().rect(
+        rect,
+        CornerRadius::same(radius::SM),
+        p.accent_alpha(if p.dark { 0.12 } else { 0.08 }),
+        Stroke::new(1.0, p.accent_alpha(if p.dark { 0.35 } else { 0.3 })),
+        StrokeKind::Inside,
+    );
+    let mut x = rect.left() + 10.0;
+    let name_w = name_g.size().x;
+    ui.painter().galley(
+        Pos2::new(x, rect.center().y - name_g.size().y / 2.0),
+        name_g,
+        p.muted,
+    );
+    x += name_w + 6.0;
+    let value_w = value_g.size().x;
+    ui.painter().galley(
+        Pos2::new(x, rect.center().y - value_g.size().y / 2.0),
+        value_g,
+        p.text,
+    );
+    x += value_w + 6.0;
+    let close = Rect::from_min_size(Pos2::new(x, rect.center().y - 10.0), vec2(20.0, 20.0));
+    let remove = ui
+        .interact(close, body.id.with("remove"), Sense::click())
+        .on_hover_text(format!("Remove {} filter", name.to_lowercase()));
+    if remove.hovered() {
+        ui.painter()
+            .rect_filled(close, CornerRadius::same(radius::XS), p.hover);
+    }
+    icons::paint(ui.painter(), close, Icon::Close, 10.0, p.text_2);
+    (body, remove.clicked())
+}
+
+fn type_menu(ui: &mut egui::Ui, app: &mut ExploristApp) {
+    let p = app.palette;
+    menu::style(ui);
+    let chosen = app.browser.filter().types.clone();
+    for (label, count) in app.browser.type_counts().into_iter().take(20) {
+        let on = chosen.contains(&label);
+        let (rect, response) =
+            ui.allocate_exact_size(vec2(menu::MENU_WIDTH - 8.0, 30.0), Sense::click());
+        if response.hovered() {
+            ui.painter().rect_filled(
+                rect,
+                CornerRadius::same(radius::SM - 1),
+                p.accent_alpha(if p.dark { 0.16 } else { 0.10 }),
+            );
+        }
+        if on {
+            icons::paint(
+                ui.painter(),
+                Rect::from_center_size(
+                    Pos2::new(rect.left() + 18.0, rect.center().y),
+                    vec2(14.0, 14.0),
+                ),
+                Icon::Check,
+                14.0,
+                p.accent,
+            );
+        }
+        ui.painter().text(
+            Pos2::new(rect.left() + 34.0, rect.center().y),
+            Align2::LEFT_CENTER,
+            &label,
+            text::body(),
+            p.text,
+        );
+        ui.painter().text(
+            Pos2::new(rect.right() - 10.0, rect.center().y),
+            Align2::RIGHT_CENTER,
+            count.to_string(),
+            crate::ui::fonts::mono(11.5),
+            p.muted,
+        );
+        if response.clicked() {
+            app.browser.edit_filter(|f| {
+                if on {
+                    f.types.retain(|t| *t != label);
+                } else {
+                    f.types.push(label.clone());
+                }
+            });
+        }
+    }
+}
+
+fn size_menu(ui: &mut egui::Ui, app: &mut ExploristApp) {
+    use crate::fs::filter::SizeRule;
+    let p = app.palette;
+    menu::style(ui);
+    let Some(rule) = app.browser.filter().size else {
+        return;
+    };
+    let selected = if rule.at_least { 0 } else { 1 };
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.add_space(6.0);
+        if let Some(i) = widgets::segmented(ui, &p, &["Larger than", "Smaller than"], selected) {
+            app.browser.edit_filter(|f| {
+                f.size = Some(SizeRule {
+                    at_least: i == 0,
+                    ..rule
+                })
+            });
+        }
+    });
+    ui.add_space(4.0);
+    for (label, bytes) in [
+        ("1 KB", 1u64 << 10),
+        ("100 KB", 100 << 10),
+        ("1 MB", 1 << 20),
+        ("10 MB", 10 << 20),
+        ("100 MB", 100 << 20),
+        ("1 GB", 1 << 30),
+    ] {
+        let mark = if rule.bytes == bytes { "✓ " } else { "   " };
+        if menu::plain_item(ui, &p, &format!("{mark}{label}")) {
+            app.browser
+                .edit_filter(|f| f.size = Some(SizeRule { bytes, ..rule }));
+        }
+    }
 }
 
 fn skeleton(ui: &mut egui::Ui, app: &ExploristApp) {

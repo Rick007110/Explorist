@@ -205,7 +205,7 @@ impl Browser {
     }
 
     fn load(&mut self, path: PathBuf) {
-        self.filter.set_query("");
+        self.filter.clear();
         self.selection.clear();
         self.select_when_loaded = None;
         self.start_listing(path);
@@ -332,6 +332,33 @@ impl Browser {
     pub fn set_filter_query(&mut self, query: &str) {
         self.filter.set_query(query);
         self.refilter();
+    }
+
+    /// Changes the Type / Size / Modified chips.
+    pub fn edit_filter(&mut self, change: impl FnOnce(&mut Filter)) {
+        change(&mut self.filter);
+        self.refilter();
+    }
+
+    /// Clears the name filter and every chip.
+    pub fn clear_filter(&mut self) {
+        self.filter.clear();
+        self.refilter();
+    }
+
+    /// Each Type label in the folder (hidden items aside) with how many
+    /// items have it, most common first.
+    pub fn type_counts(&self) -> Vec<(String, usize)> {
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for entry in &self.entries {
+            if self.filter.show_hidden || !(entry.hidden || entry.system) {
+                *counts.entry(&entry.type_label).or_default() += 1;
+            }
+        }
+        let mut list: Vec<(String, usize)> =
+            counts.into_iter().map(|(t, n)| (t.to_owned(), n)).collect();
+        list.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        list
     }
 
     pub fn set_show_hidden(&mut self, show: bool) {
