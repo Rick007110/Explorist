@@ -9,6 +9,7 @@ pub mod icons;
 pub mod menu;
 pub mod palette;
 pub mod preview;
+pub mod properties;
 pub mod settings;
 pub mod sidebar;
 pub mod status_bar;

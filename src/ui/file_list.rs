@@ -639,6 +639,8 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
             Command::DeletePermanently,
             Command::DeletePermanently.label(),
         )),
+        None,
+        Some((Command::Properties, Command::Properties.label())),
     ];
     for item in items {
         match item {
@@ -692,6 +694,10 @@ pub(super) fn background_menu(
         if menu::item_labeled(ui, &p, label, command, true) {
             commands.push(command);
         }
+    }
+    menu::separator(ui, &p);
+    if menu::item(ui, &p, Command::Properties, true) {
+        commands.push(Command::Properties);
     }
 }
 

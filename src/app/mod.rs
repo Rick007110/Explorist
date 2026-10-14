@@ -69,6 +69,7 @@ pub struct ViewState {
     pub rename: Option<Rename>,
     pub toast: Option<Toast>,
     pub confirm_delete: Option<Vec<PathBuf>>,
+    pub properties: Option<crate::ui::properties::PropertiesState>,
     /// Scroll the focused row into view on the next frame.
     pub scroll_to_focus: bool,
     /// Rows that fit in the list, for Page Up / Page Down.
@@ -345,6 +346,7 @@ impl ExploristApp {
     fn handle_keys(&mut self, ctx: &egui::Context) {
         // Dialogs and the palette handle their own keys.
         if self.view.confirm_delete.is_some()
+            || self.view.properties.is_some()
             || self.view.palette.is_some()
             || self.view.batch.is_some()
         {
@@ -572,6 +574,12 @@ impl ExploristApp {
             Command::TogglePreview => {
                 self.settings.show_preview = !self.settings.show_preview;
                 self.save_settings();
+            }
+            Command::Properties => {
+                let entries = ui::properties::targets(self);
+                if !entries.is_empty() {
+                    self.view.properties = Some(ui::properties::PropertiesState::new(ctx, entries));
+                }
             }
             Command::ToggleGrid => {
                 self.settings.grid_view = !self.settings.grid_view;
@@ -859,6 +867,7 @@ impl eframe::App for ExploristApp {
         let toast_hovered = ui::toast::show(&ctx, self);
         self.expire_toast(&ctx, toast_hovered);
         ui::dialogs::confirm_delete(&ctx, self);
+        ui::properties::show(&ctx, self);
         ui::palette::show(&ctx, self);
         ui::batch_rename::show(&ctx, self);
         ui::update::show(&ctx, self);

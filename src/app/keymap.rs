@@ -71,6 +71,7 @@ const FAVORITE_KEYS: [Key; 9] = [
 
 const TABLE: &[(Mods, Key, Command)] = &[
     (Mods::NONE, Key::Enter, Command::Open),
+    (Mods::ALT, Key::Enter, Command::Properties),
     (Mods::ALT, Key::ArrowLeft, Command::GoBack),
     (Mods::NONE, Key::Backspace, Command::GoBack),
     (Mods::ALT, Key::ArrowRight, Command::GoForward),

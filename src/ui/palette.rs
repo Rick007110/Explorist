@@ -284,6 +284,8 @@ fn command_icon(command: Command) -> Icon {
         Command::GoForward => Icon::Forward,
         Command::GoUp => Icon::Up,
         Command::TogglePreview => Icon::PreviewPanel,
+        Command::ToggleGrid => Icon::Grid,
+        Command::Properties => Icon::File,
         Command::OpenSettings => Icon::Config,
         Command::OpenTerminal => Icon::Exe,
         Command::RecentPlaces => Icon::Home,

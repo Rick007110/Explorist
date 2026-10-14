@@ -45,6 +45,7 @@ with rebindable shortcuts, and update checks.
 | Delete permanently | Shift Del (asks first) |
 | Undo | Ctrl Z |
 | Copy path | Ctrl Shift C |
+| Properties | Alt Enter |
 | Select all | Ctrl A |
 | Show hidden files | Ctrl H |
 | Preview panel | Ctrl . |

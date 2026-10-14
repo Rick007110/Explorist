@@ -41,6 +41,8 @@ pub enum Command {
     /// Add the selected folder to Favorites.
     PinFolder,
     TogglePreview,
+    /// Size, dates and attributes of the selection or the folder.
+    Properties,
     /// Switch between the list and the grid of tiles.
     ToggleGrid,
     CommandPalette,
@@ -100,6 +102,7 @@ impl Command {
             Self::PinFolder => "Pin to Favorites",
             Self::TogglePreview => "Toggle preview panel",
             Self::ToggleGrid => "Toggle grid view",
+            Self::Properties => "Properties",
             Self::CommandPalette => "Command palette",
             Self::BatchRename => "Batch rename…",
             Self::NewTab => "New tab",
@@ -133,6 +136,7 @@ impl Command {
             Self::OpenSettings => "open_settings",
             Self::TogglePreview => "toggle_preview",
             Self::ToggleGrid => "toggle_grid",
+            Self::Properties => "properties",
             Self::CommandPalette => "command_palette",
             Self::BatchRename => "batch_rename",
             Self::NewTab => "new_tab",
@@ -147,7 +151,7 @@ impl Command {
     }
 
     /// Commands listed on the Keyboard settings page, in order.
-    pub const CUSTOMIZABLE: [Command; 25] = [
+    pub const CUSTOMIZABLE: [Command; 26] = [
         Command::CommandPalette,
         Command::RecentPlaces,
         Command::EditPath,
@@ -166,6 +170,7 @@ impl Command {
         Command::Refresh,
         Command::Open,
         Command::OpenTerminal,
+        Command::Properties,
         Command::TogglePreview,
         Command::ToggleGrid,
         Command::NewTab,
@@ -176,7 +181,7 @@ impl Command {
     ];
 
     /// Commands offered in the palette, in order of usefulness.
-    pub const PALETTE: [Command; 29] = [
+    pub const PALETTE: [Command; 30] = [
         Command::Open,
         Command::Rename,
         Command::BatchRename,
@@ -186,6 +191,7 @@ impl Command {
         Command::Cut,
         Command::Paste,
         Command::CopyPath,
+        Command::Properties,
         Command::Trash,
         Command::DeletePermanently,
         Command::Undo,

@@ -76,6 +76,15 @@ impl Entry {
     }
 }
 
+/// Whether `path` counts as hidden on this platform.
+pub fn is_hidden(path: &Path, metadata: &Metadata) -> bool {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_default();
+    attributes(&name, metadata).0
+}
+
 #[cfg(windows)]
 fn attributes(_name: &str, metadata: &Metadata) -> (bool, bool) {
     use std::os::windows::fs::MetadataExt;
