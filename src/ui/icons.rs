@@ -177,10 +177,11 @@ impl Pen<'_> {
     /// Points along an arc, angles in radians (0 = right, clockwise in
     /// screen space), for building paths.
     fn arc(cx: f32, cy: f32, r: f32, from: f32, to: f32) -> Vec<(f32, f32)> {
-        const STEPS: usize = 8;
-        (0..=STEPS)
+        // About one segment per 10°, so big arcs stay round.
+        let steps = (((to - from).abs() / (PI / 18.0)).ceil() as usize).max(8);
+        (0..=steps)
             .map(|i| {
-                let a = from + (to - from) * i as f32 / STEPS as f32;
+                let a = from + (to - from) * i as f32 / steps as f32;
                 (cx + r * a.cos(), cy + r * a.sin())
             })
             .collect()
@@ -297,10 +298,12 @@ fn draw(mut pen: Pen<'_>, icon: Icon) {
             pen.line(&[(3.5, 8.0), (8.0, 3.5), (12.5, 8.0)]);
         }
         Icon::Refresh => {
-            // Not in the design; built from its arrow style.
-            let pts = Pen::arc(8.0, 8.0, 5.0, -0.25 * PI, 1.5 * PI);
+            // Not in the design; built from its arrow style. Three quarters
+            // of a circle, clockwise from the right to the top, with the
+            // arrowhead pointing into the gap.
+            let pts = Pen::arc(8.0, 8.5, 5.0, 0.0, 1.5 * PI);
             pen.line(&pts);
-            pen.line(&[(11.5, 1.75), (11.55, 4.45), (8.85, 4.5)]);
+            pen.line(&[(6.5, 1.5), (8.5, 3.5), (6.5, 5.5)]);
         }
         Icon::Filter => {
             pen.line(&[(2.5, 4.0), (13.5, 4.0)]);

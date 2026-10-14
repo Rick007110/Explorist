@@ -92,7 +92,7 @@ impl Default for Settings {
 pub enum Theme {
     Dark,
     Light,
-    /// Match Windows' light/dark setting.
+    /// Match the system's light/dark setting.
     #[default]
     System,
 }

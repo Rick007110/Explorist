@@ -298,7 +298,7 @@ fn section_rows(section: Section) -> Vec<(&'static str, &'static str)> {
         Section::Appearance => vec![
             (
                 "Theme",
-                "Match Windows follows your system light/dark setting.",
+                "Match system follows your system light/dark setting.",
             ),
             (
                 "Accent",
@@ -474,7 +474,7 @@ fn appearance(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &
             for (theme, label) in [
                 (Theme::Dark, "Dark"),
                 (Theme::Light, "Light"),
-                (Theme::System, "Match Windows"),
+                (Theme::System, "Match system"),
             ] {
                 if theme_card(ui, p, theme, label, s.theme == theme, s.accent) {
                     s.theme = theme;
