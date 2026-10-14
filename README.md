@@ -1,6 +1,21 @@
 # Explorist
 
-A fast, keyboard-friendly file manager for Windows, written in Rust with [egui](https://github.com/emilk/egui).
+A fast, keyboard-friendly file manager for Windows, with Linux and macOS
+builds too, written in Rust with [egui](https://github.com/emilk/egui).
+
+## Installing
+
+Download from the latest release:
+
+- **Windows:** `explorist-<version>-windows-x86_64.zip`. Unzip and run
+  `explorist.exe`. Windows SmartScreen may warn because the build isn't
+  signed; choose *More info → Run anyway*.
+- **Linux:** `explorist-<version>-linux-x86_64.tar.gz`. Unpack and run
+  `explorist` (X11 or Wayland).
+- **macOS:** `explorist-<version>-macos-universal.zip` (Apple Silicon and
+  Intel). Unzip and move `Explorist.app` to Applications. The app isn't
+  notarized, so the first time right-click it and choose *Open*, or run
+  `xattr -dr com.apple.quarantine /Applications/Explorist.app`.
 
 ## Status
 
@@ -55,8 +70,8 @@ Settings are saved to `%APPDATA%\Explorist\settings.toml`.
 
 1. Set the new `version` in `Cargo.toml` and commit.
 2. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`.
-3. The Release workflow builds `explorist.exe`, zips it and publishes a
-   GitHub Release. Installed copies offer the update within a day (or on
+3. The Release workflow builds Windows, Linux and macOS packages and
+   publishes them in one GitHub Release. Installed copies offer the update within a day (or on
    *Settings → General → Check now*).
 
 The update check reads the repository's latest release, so it only finds

@@ -1,8 +1,8 @@
 name: Release
 
 # Push a tag like v0.2.0 (matching the version in Cargo.toml) to build
-# explorist.exe on Windows and publish it as a GitHub Release. The app's
-# update check looks for the "*windows*.zip" asset of the latest release.
+# Explorist for Windows, Linux and macOS and publish all three in one
+# GitHub Release. The app's update check picks its platform's download.
 on:
   push:
     tags: ["v*"]
@@ -14,26 +14,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
       - name: Check the tag matches Cargo.toml
-        shell: bash
+        id: check
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "::error::Tag $GITHUB_REF_NAME doesn't match Cargo.toml version $version"
             exit 1
           fi
-          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - run: cargo test --release
+  windows:
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - run: cargo build --release
-
       - name: Package
         shell: pwsh
         run: |
@@ -43,8 +49,91 @@ jobs:
           Copy-Item README.md $dir/
           Copy-Item assets/fonts/OFL.txt $dir/FONTS-OFL.txt
           Compress-Archive -Path $dir -DestinationPath "explorist-$env:VERSION-windows-x86_64.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: explorist-*-windows-x86_64.zip
 
+  linux:
+    needs: version
+    # The oldest supported runner, so the binary runs on older glibc too.
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - name: Package
+        run: |
+          dir="explorist-$VERSION"
+          mkdir "$dir"
+          cp target/release/explorist README.md "$dir/"
+          cp assets/fonts/OFL.txt "$dir/FONTS-OFL.txt"
+          strip "$dir/explorist"
+          tar -czf "explorist-$VERSION-linux-x86_64.tar.gz" "$dir"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: explorist-*-linux-x86_64.tar.gz
+
+  macos:
+    needs: version
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --target aarch64-apple-darwin
+      - run: cargo build --release --target x86_64-apple-darwin
+      - name: Package Explorist.app (Apple Silicon and Intel)
+        run: |
+          app="Explorist.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          lipo -create \
+            target/aarch64-apple-darwin/release/explorist \
+            target/x86_64-apple-darwin/release/explorist \
+            -output "$app/Contents/MacOS/explorist"
+          cp assets/fonts/OFL.txt "$app/Contents/Resources/FONTS-OFL.txt"
+          cat > "$app/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>Explorist</string>
+            <key>CFBundleDisplayName</key><string>Explorist</string>
+            <key>CFBundleIdentifier</key><string>io.github.rick007110.explorist</string>
+            <key>CFBundleExecutable</key><string>explorist</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>$VERSION</string>
+            <key>CFBundleVersion</key><string>$VERSION</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          # Not notarized: sign ad hoc so Apple Silicon will run it.
+          codesign --force --deep --sign - "$app"
+          ditto -c -k --keepParent "$app" "explorist-$VERSION-macos-universal.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: explorist-*-macos-universal.zip
+
+  publish:
+    needs: [version, windows, linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          files: explorist-*-windows-x86_64.zip
+          files: dist/*
           generate_release_notes: true
