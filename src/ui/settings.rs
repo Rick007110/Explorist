@@ -22,15 +22,17 @@ pub enum Section {
     Appearance,
     Sorting,
     Keyboard,
+    Git,
     Advanced,
 }
 
 impl Section {
-    const ALL: [Section; 5] = [
+    const ALL: [Section; 6] = [
         Section::General,
         Section::Appearance,
         Section::Sorting,
         Section::Keyboard,
+        Section::Git,
         Section::Advanced,
     ];
 
@@ -40,6 +42,7 @@ impl Section {
             Self::Appearance => "Appearance",
             Self::Sorting => "Sorting & view",
             Self::Keyboard => "Keyboard",
+            Self::Git => "Git",
             Self::Advanced => "Advanced",
         }
     }
@@ -242,6 +245,7 @@ fn content(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mut
             Section::Appearance => appearance(ui, app, p, changes),
             Section::Sorting => sorting(ui, app, p, changes),
             Section::Keyboard => keyboard(ui, app, p, changes),
+            Section::Git => git(ui, app, p, changes),
             Section::Advanced => advanced(ui, app, p, changes),
         }
     }
@@ -317,6 +321,10 @@ fn section_rows(section: Section) -> Vec<(&'static str, &'static str)> {
         Section::Keyboard => vec![(
             "Keyboard shortcuts",
             "Rename, filter, new folder, shortcut keys",
+        )],
+        Section::Git => vec![(
+            "Show git status",
+            "Badges for changed files and the branch in the status bar. Needs git installed.",
         )],
         Section::Advanced => vec![
             ("Settings file", "Where these settings are saved."),
@@ -817,6 +825,16 @@ fn keyboard(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mu
                 .color(p.muted),
         );
     });
+}
+
+fn git(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mut Changes) {
+    let query = app.view.settings.search.clone();
+    let rows = section_rows(Section::Git);
+    let mut s = app.settings.clone();
+    row(ui, &query, p, rows[0].0, rows[0].1, |ui| {
+        widgets::switch(ui, p, &mut s.git_status);
+    });
+    commit(app, s, changes);
 }
 
 fn advanced(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mut Changes) {

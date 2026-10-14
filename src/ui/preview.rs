@@ -282,6 +282,14 @@ fn single(
     if let Some(t) = entry.created {
         details.push(("Created", format::date(t, date_format), true));
     }
+    if let Some(git) = app.git.poll() {
+        let state = match git.state_of(&entry.path, entry.is_dir) {
+            Some(state) => state.describe(),
+            None if entry.is_dir => "Clean",
+            None => "Tracked · clean",
+        };
+        details.push(("Git", state.to_owned(), false));
+    }
     if entry.hidden || entry.system {
         let what = if entry.system {
             "System file"

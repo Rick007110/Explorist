@@ -15,6 +15,7 @@ use egui::{
 use crate::app::ExploristApp;
 use crate::app::browser::LoadState;
 use crate::app::commands::Command;
+use crate::fs::git::FileState as GitState;
 use crate::fs::listing::{ListError, ListErrorKind};
 use crate::fs::sort::{SortColumn, SortDirection};
 use crate::fs::{format, ops};
@@ -297,8 +298,13 @@ fn draw_row(
     }
 
     let [name_cell, size_cell, mod_cell, type_cell] = columns(rect);
-    // Hidden items, and items cut to the clipboard, are drawn dimmed.
-    let dim = entry.hidden || app.view.cut.contains(&entry.path);
+    let git = app
+        .git
+        .poll()
+        .and_then(|g| g.state_of(&entry.path, entry.is_dir));
+    let ignored = git == Some(GitState::Ignored);
+    // Hidden, git-ignored, and cut items are drawn dimmed.
+    let dim = entry.hidden || ignored || app.view.cut.contains(&entry.path);
     let icon_color = if entry.is_dir {
         if dim { p.faint } else { p.accent }
     } else if selected {
@@ -338,8 +344,32 @@ fn draw_row(
             text::body()
         };
         let color = if dim { p.muted } else { p.text };
-        let galley = widgets::truncated(ui, &entry.name, font, color, name_rect.width());
+        let badge = git.filter(|g| *g != GitState::Ignored);
+        let badge_w = if badge.is_some() { 30.0 } else { 0.0 };
+        let galley = widgets::truncated(ui, &entry.name, font, color, name_rect.width() - badge_w);
+        let name_w = galley.size().x;
         widgets::paint_aligned(ui.painter(), name_rect, galley, Align2::LEFT_CENTER, color);
+        if let Some(state) = badge {
+            let tint = match state {
+                GitState::Added | GitState::Untracked => p.success,
+                GitState::Conflicted | GitState::Deleted => p.error,
+                _ => p.warning,
+            };
+            let x = name_rect.left() + name_w + 8.0;
+            ui.painter()
+                .circle_filled(Pos2::new(x + 3.0, rect.center().y), 3.0, tint);
+            ui.painter().text(
+                Pos2::new(x + 11.0, rect.center().y),
+                Align2::LEFT_CENTER,
+                state.letter(),
+                crate::ui::fonts::mono(11.0),
+                tint,
+            );
+            let badge_rect =
+                Rect::from_min_size(Pos2::new(x - 2.0, rect.top()), vec2(24.0, rect.height()));
+            ui.interact(badge_rect, ui.id().with(("git", row)), Sense::hover())
+                .on_hover_text(state.describe());
+        }
 
         let (size_text, f, c) = meta(entry.size.map_or_else(|| "—".to_owned(), format::size));
         let g = ui.painter().layout_no_wrap(size_text, f, c);
@@ -353,9 +383,14 @@ fn draw_row(
         );
         let g = ui.painter().layout_no_wrap(date, f, c);
         widgets::paint_aligned(ui.painter(), mod_cell, g, Align2::LEFT_CENTER, c);
+        let type_label = if ignored {
+            format!("{} · ignored", entry.type_label)
+        } else {
+            entry.type_label.to_string()
+        };
         let g = widgets::truncated(
             ui,
-            &entry.type_label,
+            &type_label,
             crate::ui::fonts::regular(12.5),
             p.muted,
             type_cell.width(),

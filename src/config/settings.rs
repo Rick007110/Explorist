@@ -42,6 +42,8 @@ pub struct Settings {
     /// Folders open in tabs when Explorist closed, and which was active.
     pub open_tabs: Vec<PathBuf>,
     pub active_tab: usize,
+    /// Show git badges and the branch (needs git installed).
+    pub git_status: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -77,6 +79,7 @@ impl Default for Settings {
             show_preview: true,
             open_tabs: Vec::new(),
             active_tab: 0,
+            git_status: true,
         }
     }
 }
@@ -278,6 +281,7 @@ mod tests {
             show_preview: false,
             open_tabs: vec![PathBuf::from("C:\\Users"), PathBuf::from("D:\\photos")],
             active_tab: 1,
+            git_status: false,
         };
         settings.save(&path).unwrap();
         assert!(!path.with_extension("toml.tmp").exists());

@@ -7,6 +7,7 @@ pub mod clipboard;
 pub mod entry;
 pub mod filter;
 pub mod format;
+pub mod git;
 pub mod index;
 pub mod jobs;
 pub mod kind;

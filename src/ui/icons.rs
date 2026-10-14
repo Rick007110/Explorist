@@ -39,6 +39,7 @@ pub enum Icon {
     Check,
     Warning,
     PreviewPanel,
+    Branch,
     // Places
     Home,
     Desktop,
@@ -308,6 +309,29 @@ fn draw(mut pen: Pen<'_>, icon: Icon) {
             pen.line(&[(4.0, 8.7), (8.0, 12.7), (12.0, 8.7)]);
         }
         Icon::Check => pen.line(&[(3.5, 8.5), (6.5, 11.5), (12.5, 4.5)]),
+        Icon::Branch => {
+            pen.circle(4.5, 3.5, 1.5);
+            pen.circle(4.5, 12.5, 1.5);
+            pen.circle(11.5, 5.5, 1.5);
+            pen.line(&[(4.5, 5.0), (4.5, 11.0)]);
+            // M11.5 7 c0 2.5 -2 3 -7 4: a gentle curve down to the trunk.
+            let curve: Vec<(f32, f32)> = (0..=8)
+                .map(|i| {
+                    let t = i as f32 / 8.0;
+                    let u = 1.0 - t;
+                    let x = u * u * u * 11.5
+                        + 3.0 * u * u * t * 11.5
+                        + 3.0 * u * t * t * 9.5
+                        + t * t * t * 4.5;
+                    let y = u * u * u * 7.0
+                        + 3.0 * u * u * t * 9.5
+                        + 3.0 * u * t * t * 10.0
+                        + t * t * t * 11.0;
+                    (x, y)
+                })
+                .collect();
+            pen.line(&curve);
+        }
         Icon::PreviewPanel => {
             pen.rect(2.0, 2.5, 12.0, 11.0, 1.5);
             pen.line(&[(10.0, 2.5), (10.0, 13.5)]);

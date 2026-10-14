@@ -50,6 +50,10 @@ pub struct ExploristApp {
     /// `browser` and `view`.
     pub(crate) tabs: Vec<Option<tabs::TabSlot>>,
     pub(crate) active_tab: usize,
+    pub(crate) git: crate::fs::git::GitWatcher,
+    /// The folder contents' generation git last saw, and when.
+    git_seen: (u64, Instant),
+    git_folder: PathBuf,
     pub(crate) preview_image: Option<ui::preview::PreviewImage>,
 }
 
@@ -178,6 +182,9 @@ impl ExploristApp {
             recent: Vec::new(),
             tabs: vec![None],
             active_tab: 0,
+            git: Default::default(),
+            git_seen: (u64::MAX, Instant::now()),
+            git_folder: PathBuf::new(),
         };
         // Reopen the other tabs from last time.
         if app.settings.start_in == StartIn::LastFolder && std::env::args_os().nth(1).is_none() {
@@ -234,6 +241,30 @@ impl ExploristApp {
         let folder = self.browser.location().to_path_buf();
         self.settings.remember_sort(&folder, self.browser.sort());
         self.save_settings();
+    }
+
+    /// Re-checks git status when the folder or its contents change, at
+    /// most once a second.
+    fn refresh_git(&mut self, ctx: &egui::Context) {
+        if !self.settings.git_status {
+            self.git.clear();
+            return;
+        }
+        let generation = self.browser.generation();
+        let moved = self.git_folder != self.browser.location();
+        if generation == self.git_seen.0 && !moved {
+            return;
+        }
+        let since = self.git_seen.1.elapsed();
+        if !moved && since < Duration::from_secs(1) {
+            ctx.request_repaint_after(Duration::from_secs(1) - since);
+            return;
+        }
+        self.git_seen = (generation, Instant::now());
+        let wake = ctx.clone();
+        self.git
+            .refresh(self.browser.location(), move || wake.request_repaint());
+        self.git_folder = self.browser.location().to_path_buf();
     }
 
     /// Whether to skip movement: the user's choice, else Windows'.
@@ -771,6 +802,7 @@ impl eframe::App for ExploristApp {
             }
         }
         self.poll_job();
+        self.refresh_git(&ctx);
         self.handle_dropped_files(&ctx);
         if let Some(wait) = self.browser.repaint_in() {
             ctx.request_repaint_after(wait);

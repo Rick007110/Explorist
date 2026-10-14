@@ -53,6 +53,8 @@ pub struct Browser {
     watcher: Option<FolderWatcher>,
     pending: Changes,
     last_change: Option<Instant>,
+    /// Bumped whenever the entries change, so others can tell.
+    generation: u64,
 }
 
 impl Browser {
@@ -75,6 +77,7 @@ impl Browser {
             watcher: None,
             pending: Changes::default(),
             last_change: None,
+            generation: 0,
         };
         browser.load(location);
         browser
@@ -336,7 +339,13 @@ impl Browser {
         self.refilter();
     }
 
+    /// Changes whenever the folder's contents change.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
     fn resort(&mut self) {
+        self.generation += 1;
         self.sort.sort(&mut self.entries);
         self.refilter();
     }

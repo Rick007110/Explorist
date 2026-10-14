@@ -92,13 +92,62 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 };
                 format!("Sorted by {column} {arrow}")
             };
-            painter.text(
+            let sort_rect = painter.text(
                 Pos2::new(rect.right() - 14.0, y),
                 Align2::RIGHT_CENTER,
                 right,
-                font,
+                font.clone(),
                 p.muted,
             );
+
+            // Git: branch, ahead/behind, and how many files changed.
+            if let Some(git) = app.git.poll().cloned() {
+                let mut x = sort_rect.left() - 16.0;
+                let changed = git.changed_count();
+                if changed > 0 {
+                    let r = painter.text(
+                        Pos2::new(x, y),
+                        Align2::RIGHT_CENTER,
+                        format!("{changed} modified"),
+                        font.clone(),
+                        p.warning,
+                    );
+                    x = r.left() - 12.0;
+                }
+                if git.ahead > 0 || git.behind > 0 {
+                    let mut sync = String::new();
+                    if git.ahead > 0 {
+                        sync.push_str(&format!("↑{}", git.ahead));
+                    }
+                    if git.behind > 0 {
+                        if !sync.is_empty() {
+                            sync.push(' ');
+                        }
+                        sync.push_str(&format!("↓{}", git.behind));
+                    }
+                    let r = painter.text(
+                        Pos2::new(x, y),
+                        Align2::RIGHT_CENTER,
+                        sync,
+                        font.clone(),
+                        p.muted,
+                    );
+                    x = r.left() - 12.0;
+                }
+                let branch = git.branch.clone().unwrap_or_else(|| "detached".to_owned());
+                let r = painter.text(Pos2::new(x, y), Align2::RIGHT_CENTER, branch, font, p.muted);
+                let icon = egui::Rect::from_center_size(
+                    Pos2::new(r.left() - 10.0, y),
+                    egui::vec2(14.0, 14.0),
+                );
+                crate::ui::icons::paint(
+                    painter,
+                    icon,
+                    crate::ui::icons::Icon::Branch,
+                    14.0,
+                    p.muted,
+                );
+            }
         });
 }
 
