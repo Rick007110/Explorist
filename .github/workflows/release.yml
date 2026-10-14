@@ -4,11 +4,12 @@ name: Release
 # one GitHub Release. Either push a tag like v0.2.0 (matching the version
 # in Cargo.toml), or push a commit to the `release` branch and the tag
 # v<Cargo.toml version> is created for it. The app's update check picks
-# its platform's download.
+# its platform's download. Pushing to `release-dry-run` builds every
+# package without publishing, to try out packaging changes.
 on:
   push:
     tags: ["v*"]
-    branches: [release]
+    branches: [release, release-dry-run]
 
 permissions:
   contents: write
@@ -32,7 +33,7 @@ jobs:
               echo "::error::Tag $GITHUB_REF_NAME doesn't match Cargo.toml version $version"
               exit 1
             fi
-          elif git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+          elif [ "$GITHUB_REF_NAME" = "release" ] && git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
             echo "::error::v$version is already released; bump the version in Cargo.toml first"
             exit 1
           fi
@@ -56,11 +57,22 @@ jobs:
           Copy-Item target/release/explorist.exe $dir/
           Copy-Item README.md $dir/
           Copy-Item assets/fonts/OFL.txt $dir/FONTS-OFL.txt
+          Copy-Item assets/icons/lucide/LICENSE $dir/ICONS-LICENSE.txt
           Compress-Archive -Path $dir -DestinationPath "explorist-$env:VERSION-windows-x86_64.zip"
+      - name: Installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          & $iscc packaging/windows/explorist.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Move-Item dist/*.exe .
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: explorist-*-windows-x86_64.zip
+          path: |
+            explorist-*-windows-x86_64.zip
+            explorist-*-windows-x86_64-setup.exe
 
   linux:
     needs: version
@@ -79,6 +91,7 @@ jobs:
           mkdir "$dir"
           cp target/release/explorist README.md "$dir/"
           cp assets/fonts/OFL.txt "$dir/FONTS-OFL.txt"
+          cp assets/icons/lucide/LICENSE "$dir/ICONS-LICENSE.txt"
           cp assets/icon/icon-256.png "$dir/explorist.png"
           cat > "$dir/explorist.desktop" <<DESKTOP
           [Desktop Entry]
@@ -119,6 +132,7 @@ jobs:
             target/x86_64-apple-darwin/release/explorist \
             -output "$app/Contents/MacOS/explorist"
           cp assets/fonts/OFL.txt "$app/Contents/Resources/FONTS-OFL.txt"
+          cp assets/icons/lucide/LICENSE "$app/Contents/Resources/ICONS-LICENSE.txt"
           cp assets/icon/icon.icns "$app/Contents/Resources/Explorist.icns"
           cat > "$app/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
@@ -140,14 +154,23 @@ jobs:
           PLIST
           # Not notarized: sign ad hoc so Apple Silicon will run it.
           codesign --force --deep --sign - "$app"
+          # The zip is for the app's updater; people download the disk image.
           ditto -c -k --keepParent "$app" "explorist-$VERSION-macos-universal.zip"
+          mkdir dmg
+          cp -R "$app" dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname Explorist -srcfolder dmg -ov -format UDZO \
+            "explorist-$VERSION-macos-universal.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: explorist-*-macos-universal.zip
+          path: |
+            explorist-*-macos-universal.zip
+            explorist-*-macos-universal.dmg
 
   publish:
     needs: [version, windows, linux, macos]
+    if: github.ref_name != 'release-dry-run'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
