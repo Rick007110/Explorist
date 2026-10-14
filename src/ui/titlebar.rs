@@ -11,6 +11,9 @@ use crate::ui::icons::{self, Icon};
 use crate::ui::theme::{radius, size};
 use crate::ui::widgets;
 
+/// macOS draws its own window buttons; other systems use ours.
+const NATIVE_BUTTONS: bool = cfg!(target_os = "macos");
+
 /// Windows' own hover color for the close button.
 const CLOSE_HOVER: Color32 = Color32::from_rgb(0xC4, 0x2B, 0x1C);
 
@@ -35,8 +38,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
             }
 
             // Logo.
+            // Leave room for macOS's traffic lights.
+            let inset = if NATIVE_BUTTONS { 76.0 } else { 0.0 };
             let logo = Rect::from_center_size(
-                Pos2::new(bar.left() + 12.0 + 9.0, bar.center().y),
+                Pos2::new(bar.left() + inset + 12.0 + 9.0, bar.center().y),
                 vec2(18.0, 18.0),
             );
             paint_logo(ui.painter(), logo, p.accent);
@@ -123,7 +128,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 None => {}
             }
 
-            // Window buttons.
+            // Window buttons (macOS has its own).
+            if NATIVE_BUTTONS {
+                return;
+            }
             let buttons = [
                 (Icon::Minimize, "Minimize", WindowButton::Minimize),
                 (

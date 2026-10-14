@@ -8,7 +8,8 @@ const GRIP: f32 = 5.0;
 /// Lets the user resize the window by dragging its edges and corners, since
 /// the custom title bar replaces the system frame.
 pub fn resize_handles(ctx: &egui::Context, maximized: bool) {
-    if maximized {
+    // macOS keeps its native frame, which resizes on its own.
+    if maximized || cfg!(target_os = "macos") {
         return;
     }
     let screen = ctx.content_rect();

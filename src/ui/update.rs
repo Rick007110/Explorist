@@ -220,7 +220,7 @@ pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
                             }
                             return;
                         }
-                        match (&release.download, cfg!(windows)) {
+                        match (&release.download, true) {
                             (Some(url), true) => {
                                 if widgets::button(ui, &p, "Update now", ButtonStyle::Primary, None)
                                     .clicked()

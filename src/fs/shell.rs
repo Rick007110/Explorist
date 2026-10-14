@@ -27,12 +27,34 @@ pub fn open_terminal(dir: &Path) -> io::Result<()> {
         .map(drop)
 }
 
-#[cfg(not(windows))]
+/// Opens Terminal.app in `dir`.
+#[cfg(target_os = "macos")]
 pub fn open_terminal(dir: &Path) -> io::Result<()> {
-    Command::new("x-terminal-emulator")
-        .current_dir(dir)
+    Command::new("open")
+        .args(["-a", "Terminal"])
+        .arg(dir)
         .spawn()
         .map(drop)
+}
+
+/// Opens the desktop's terminal in `dir`, trying the common ones in turn.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn open_terminal(dir: &Path) -> io::Result<()> {
+    let candidates: [(&str, &[&str]); 5] = [
+        ("x-terminal-emulator", &[]),
+        ("gnome-terminal", &[]),
+        ("konsole", &[]),
+        ("xfce4-terminal", &[]),
+        ("xterm", &[]),
+    ];
+    let mut last = io::Error::from(io::ErrorKind::NotFound);
+    for (program, args) in candidates {
+        match Command::new(program).args(args).current_dir(dir).spawn() {
+            Ok(_) => return Ok(()),
+            Err(err) => last = err,
+        }
+    }
+    Err(last)
 }
 
 /// Whether the system wants animations: Windows' "Animation effects"

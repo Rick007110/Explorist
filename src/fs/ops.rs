@@ -210,8 +210,17 @@ pub fn move_to_trash(paths: &[PathBuf]) -> Result<(), OpError> {
     trash::delete_all(paths).map_err(|err| OpError::Trash(err.to_string()))
 }
 
+#[cfg(target_os = "macos")]
+pub fn restore_from_trash(_paths: &[PathBuf]) -> Result<(), OpError> {
+    Err(OpError::Trash(
+        "putting items back isn’t supported on macOS yet; use Put Back in Finder’s Trash"
+            .to_owned(),
+    ))
+}
+
 /// Puts items moved to the Recycle Bin back where they were. When the bin
 /// holds several items from the same path, the most recently deleted wins.
+#[cfg(not(target_os = "macos"))]
 pub fn restore_from_trash(paths: &[PathBuf]) -> Result<(), OpError> {
     let trashed = trash::os_limited::list().map_err(|err| OpError::Trash(err.to_string()))?;
     let mut found = Vec::with_capacity(paths.len());
@@ -242,6 +251,7 @@ pub fn restore_from_trash(paths: &[PathBuf]) -> Result<(), OpError> {
     trash::os_limited::restore_all(found).map_err(|err| OpError::Trash(err.to_string()))
 }
 
+#[cfg(not(target_os = "macos"))]
 fn same_name(a: &str, b: &str) -> bool {
     if cfg!(windows) {
         a.to_lowercase() == b.to_lowercase()
@@ -250,6 +260,7 @@ fn same_name(a: &str, b: &str) -> bool {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 /// A form of a folder path that compares equal however it was spelled: the
 /// same folder can appear as `C:\Users\RUNNER~1` or `C:\Users\runneradmin`,
 /// in any case.

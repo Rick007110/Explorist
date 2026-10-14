@@ -1,7 +1,10 @@
 //! Checking GitHub for a newer release, and installing it.
 //!
-//! Releases are built by `.github/workflows/release.yml`, which attaches a
-//! zip holding `explorist.exe` to each tagged release.
+//! Releases are built by `.github/workflows/release.yml`, which attaches
+//! one download per platform to each tagged release:
+//! `explorist-<version>-windows-x86_64.zip`,
+//! `explorist-<version>-linux-x86_64.tar.gz` and
+//! `explorist-<version>-macos-universal.zip` (holding Explorist.app).
 
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -70,7 +73,7 @@ pub struct Release {
     pub version: String,
     pub notes: String,
     pub page: String,
-    /// The Windows zip, if the release has one.
+    /// The download for this platform, if the release has one.
     pub download: Option<String>,
 }
 
@@ -94,20 +97,58 @@ struct ApiAsset {
     browser_download_url: String,
 }
 
+/// The platform word in download names.
+const PLATFORM: &str = if cfg!(windows) {
+    "windows"
+} else if cfg!(target_os = "macos") {
+    "macos"
+} else {
+    "linux"
+};
+
+/// Picks this platform's download from asset names: the platform word, an
+/// archive, and the right processor (or a universal build).
+fn pick_asset<'a>(
+    names: impl Iterator<Item = &'a str>,
+    platform: &str,
+    arch: &str,
+) -> Option<&'a str> {
+    let candidates: Vec<&str> = names
+        .filter(|n| {
+            let n = n.to_lowercase();
+            n.contains(platform) && (n.ends_with(".zip") || n.ends_with(".tar.gz"))
+        })
+        .collect();
+    let fits = |n: &&str| {
+        let n = n.to_lowercase();
+        n.contains(arch) || n.contains("universal")
+    };
+    candidates.iter().copied().find(fits).or_else(|| {
+        // An archive without any processor in its name fits any.
+        candidates.iter().copied().find(|n| {
+            let n = n.to_lowercase();
+            !["x86_64", "aarch64", "arm64"].iter().any(|a| n.contains(a))
+        })
+    })
+}
+
 /// Reads GitHub's "latest release" JSON.
 pub fn parse_release(json: &str) -> Result<Release, String> {
+    parse_release_for(json, PLATFORM, std::env::consts::ARCH)
+}
+
+fn parse_release_for(json: &str, platform: &str, arch: &str) -> Result<Release, String> {
     let api: ApiRelease = serde_json::from_str(json).map_err(|e| e.to_string())?;
     if api.draft || api.prerelease {
         return Err("not a final release".to_owned());
     }
-    let download = api
-        .assets
-        .iter()
-        .find(|a| {
-            let name = a.name.to_lowercase();
-            name.ends_with(".zip") && name.contains("windows")
-        })
-        .map(|a| a.browser_download_url.clone());
+    let picked = pick_asset(api.assets.iter().map(|a| a.name.as_str()), platform, arch);
+    let download = picked.and_then(|name| {
+        api.assets
+            .iter()
+            .find(|a| a.name == name)
+            .map(|a| a.browser_download_url.clone())
+    });
     Ok(Release {
         version: api.tag_name.trim_start_matches(['v', 'V']).to_owned(),
         notes: api.body.unwrap_or_default(),
@@ -211,8 +252,8 @@ pub enum InstallEvent {
     Failed(String),
 }
 
-/// Downloads the zip at `url`, takes `explorist.exe` out of it and puts it
-/// in place of the running program.
+/// Downloads the archive at `url`, takes the program out of it and puts it
+/// in place of the running one.
 pub fn install_in_background(
     url: String,
     wake: impl Fn() + Send + 'static,
@@ -267,34 +308,66 @@ fn install(url: &str, progress: &dyn Fn(u64, u64)) -> io::Result<()> {
 
     let dir = std::env::temp_dir().join(format!("explorist-update-{}", std::process::id()));
     std::fs::create_dir_all(&dir)?;
-    let exe = extract_exe(&zip_bytes, &dir)?;
+    let exe = if url.to_lowercase().ends_with(".tar.gz") {
+        extract_from_tar_gz(&zip_bytes, &dir)?
+    } else {
+        extract_exe(&zip_bytes, &dir)?
+    };
     self_replace::self_replace(&exe)?;
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
-/// Writes the archive's `explorist.exe` (or the only .exe) into `dir`.
+/// The program's file name inside an archive.
+const BINARY: &str = if cfg!(windows) {
+    "explorist.exe"
+} else {
+    "explorist"
+};
+
+/// Whether an archive path is the program: `.../explorist.exe` on Windows,
+/// `.../explorist` elsewhere (including inside `Explorist.app`).
+fn is_binary(path: &str) -> bool {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    name.eq_ignore_ascii_case(BINARY)
+}
+
+/// Writes the zip's program into `dir`.
 fn extract_exe(zip_bytes: &[u8], dir: &Path) -> io::Result<PathBuf> {
     let mut archive = zip::ZipArchive::new(io::Cursor::new(zip_bytes)).map_err(io::Error::other)?;
     let index = (0..archive.len())
         .find(|&i| {
-            archive.by_index(i).is_ok_and(|f| {
-                f.name()
-                    .is_ok_and(|n| n.to_lowercase().ends_with("explorist.exe"))
-            })
+            archive
+                .by_index(i)
+                .is_ok_and(|f| f.name().is_ok_and(|n| is_binary(&n)))
         })
-        .or_else(|| {
-            (0..archive.len()).find(|&i| {
-                archive
-                    .by_index(i)
-                    .is_ok_and(|f| f.name().is_ok_and(|n| n.to_lowercase().ends_with(".exe")))
-            })
-        })
-        .ok_or_else(|| io::Error::other("the download has no explorist.exe"))?;
+        .ok_or_else(|| io::Error::other(format!("the download has no {BINARY}")))?;
     let mut file = archive.by_index(index).map_err(io::Error::other)?;
-    let target = dir.join("explorist.exe");
+    write_binary(&mut file, dir)
+}
+
+/// Writes the .tar.gz's program into `dir`.
+fn extract_from_tar_gz(bytes: &[u8], dir: &Path) -> io::Result<PathBuf> {
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes));
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?.to_string_lossy().into_owned();
+        if entry.header().entry_type().is_file() && is_binary(&path) {
+            return write_binary(&mut entry, dir);
+        }
+    }
+    Err(io::Error::other(format!("the download has no {BINARY}")))
+}
+
+fn write_binary(from: &mut impl Read, dir: &Path) -> io::Result<PathBuf> {
+    let target = dir.join(BINARY);
     let mut out = std::fs::File::create(&target)?;
-    io::copy(&mut file, &mut out)?;
+    io::copy(from, &mut out)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))?;
+    }
     Ok(target)
 }
 
@@ -341,7 +414,7 @@ mod tests {
 
     #[test]
     fn reads_release_json() {
-        let release = parse_release(JSON).unwrap();
+        let release = parse_release_for(JSON, "windows", "x86_64").unwrap();
         assert_eq!(release.version, "0.2.0");
         assert_eq!(release.notes, "Tabs and git status");
         assert_eq!(
@@ -351,9 +424,35 @@ mod tests {
     }
 
     #[test]
+    fn picks_the_download_for_each_platform() {
+        let names = [
+            "explorist-0.2.0-windows-x86_64.zip",
+            "explorist-0.2.0-linux-x86_64.tar.gz",
+            "explorist-0.2.0-linux-aarch64.tar.gz",
+            "explorist-0.2.0-macos-universal.zip",
+            "checksums.txt",
+        ];
+        let pick = |platform, arch| pick_asset(names.iter().copied(), platform, arch);
+        assert_eq!(pick("windows", "x86_64"), Some(names[0]));
+        assert_eq!(pick("linux", "x86_64"), Some(names[1]));
+        assert_eq!(pick("linux", "aarch64"), Some(names[2]));
+        assert_eq!(pick("macos", "aarch64"), Some(names[3]));
+        assert_eq!(pick("macos", "x86_64"), Some(names[3]));
+        assert_eq!(
+            pick("windows", "aarch64"),
+            None,
+            "no build for that processor"
+        );
+        assert_eq!(
+            parse_release_for(JSON, "linux", "x86_64").unwrap().download,
+            None
+        );
+    }
+
+    #[test]
     fn newer_releases_are_offered() {
         assert!(matches!(
-            compare(parse_release(JSON), "0.1.0"),
+            compare(parse_release_for(JSON, "windows", "x86_64"), "0.1.0"),
             CheckResult::Available(_)
         ));
         assert_eq!(compare(parse_release(JSON), "0.2.0"), CheckResult::UpToDate);
@@ -370,6 +469,26 @@ mod tests {
     }
 
     #[test]
+    fn extracts_from_tar_gz() {
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        {
+            let mut tar = tar::Builder::new(&mut gz);
+            let data = b"\x7fELF fake";
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            tar.append_data(&mut header, format!("explorist-0.2.0/{BINARY}"), &data[..])
+                .unwrap();
+            tar.finish().unwrap();
+        }
+        let bytes = gz.finish().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let exe = extract_from_tar_gz(&bytes, dir.path()).unwrap();
+        assert_eq!(std::fs::read(exe).unwrap(), b"\x7fELF fake");
+    }
+
+    #[test]
     fn extracts_the_exe() {
         let mut buf = io::Cursor::new(Vec::new());
         {
@@ -377,7 +496,7 @@ mod tests {
             let opts = zip::write::SimpleFileOptions::default();
             zip.start_file("README.txt", opts).unwrap();
             io::Write::write_all(&mut zip, b"hi").unwrap();
-            zip.start_file("explorist-0.2.0/explorist.exe", opts)
+            zip.start_file(format!("Explorist.app/Contents/MacOS/{BINARY}"), opts)
                 .unwrap();
             io::Write::write_all(&mut zip, b"MZ fake exe").unwrap();
             zip.finish().unwrap();

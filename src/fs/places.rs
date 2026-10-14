@@ -77,7 +77,12 @@ impl Drive {
     /// volume has no label.
     pub fn display_name(&self) -> String {
         let root = self.root.to_string_lossy();
-        let letter = root.trim_end_matches(['\\', '/']);
+        // Only Windows roots ("C:\\") make a useful suffix.
+        let letter = if root.len() <= 3 && root.contains(':') {
+            root.trim_end_matches(['\\', '/'])
+        } else {
+            ""
+        };
         let name = if self.volume_label.is_empty() {
             match self.kind {
                 DriveKind::Fixed => "Local Disk",
@@ -117,16 +122,83 @@ pub fn drives() -> Vec<Drive> {
         .collect()
 }
 
-/// Outside Windows there's a single root.
-#[cfg(not(windows))]
+/// The root, plus mounted volumes: `/Volumes/*` on macOS, and
+/// `/media/<user>/*`, `/run/media/<user>/*` and `/mnt/*` on Linux.
+#[cfg(unix)]
 pub fn drives() -> Vec<Drive> {
-    vec![Drive {
-        root: PathBuf::from("/"),
-        volume_label: "File system".to_owned(),
-        kind: DriveKind::Fixed,
-        free_bytes: None,
-        total_bytes: None,
-    }]
+    let label = if cfg!(target_os = "macos") {
+        "Macintosh HD"
+    } else {
+        "File system"
+    };
+    let mut list = vec![unix::drive(
+        PathBuf::from("/"),
+        label.to_owned(),
+        DriveKind::Fixed,
+    )];
+    let user = std::env::var("USER").unwrap_or_default();
+    let roots: Vec<PathBuf> = if cfg!(target_os = "macos") {
+        vec![PathBuf::from("/Volumes")]
+    } else {
+        vec![
+            PathBuf::from("/media").join(&user),
+            PathBuf::from("/run/media").join(&user),
+            PathBuf::from("/mnt"),
+        ]
+    };
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // macOS lists the startup disk under /Volumes as a link to /.
+            if std::fs::canonicalize(&path).is_ok_and(|p| p == Path::new("/")) || !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            list.push(unix::drive(path, name, DriveKind::Removable));
+        }
+    }
+    list
+}
+
+#[cfg(unix)]
+mod unix {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::PathBuf;
+
+    use super::{Drive, DriveKind};
+
+    pub(super) fn drive(root: PathBuf, volume_label: String, kind: DriveKind) -> Drive {
+        let (free_bytes, total_bytes) = space(&root).unzip();
+        Drive {
+            root,
+            volume_label,
+            kind,
+            free_bytes,
+            total_bytes,
+        }
+    }
+
+    /// Free (for unprivileged users) and total bytes on the volume.
+    // The statvfs field types differ between Linux (u64) and macOS (u32),
+    // so a conversion that's a no-op on one platform is needed on another.
+    #[allow(clippy::useless_conversion)]
+    fn space(path: &std::path::Path) -> Option<(u64, u64)> {
+        let c_path = CString::new(path.as_os_str().as_bytes()).ok()?;
+        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+        // SAFETY: `c_path` is NUL-terminated and `stat` is a valid out-pointer.
+        if unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) } != 0 {
+            return None;
+        }
+        let block = u64::from(stat.f_frsize);
+        Some((
+            u64::from(stat.f_bavail) * block,
+            u64::from(stat.f_blocks) * block,
+        ))
+    }
 }
 
 #[cfg(windows)]

@@ -9,9 +9,13 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  windows:
-    name: Build and test (Windows)
-    runs-on: windows-latest
+  test:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -19,7 +23,16 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
-      - run: cargo clippy --all-targets -- -D warnings
+      - name: cargo clippy
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy --all-targets --message-format=short -- -D warnings 2>&1 | tee clippy-output.txt || {
+            # Annotations show without downloading the log.
+            grep -E "(error|warning)(\[|:)" clippy-output.txt | head -10 |
+              while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          }
       - name: cargo test
         shell: bash
         run: |
@@ -28,8 +41,7 @@ jobs:
             # Surface failures as annotations so they show without the full
             # log. GitHub keeps at most 10 per step, so list names in one.
             echo "::error::Failed: $(grep -oE '^test [^ ]+ \.\.\. FAILED' test-output.txt | cut -d' ' -f2 | tr '\n' ' ')"
-            grep -A1 -E "panicked|left:|right:|error\[" test-output.txt | grep -v "^--" | head -9 |
+            grep -A1 -E "panicked|left:|right:|error\[|^error:" test-output.txt | grep -v "^--" | head -9 |
               while IFS= read -r line; do echo "::error::$line"; done
             exit 1
           }
-      - run: cargo build --release
