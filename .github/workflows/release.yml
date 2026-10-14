@@ -1,11 +1,14 @@
 name: Release
 
-# Push a tag like v0.2.0 (matching the version in Cargo.toml) to build
-# Explorist for Windows, Linux and macOS and publish all three in one
-# GitHub Release. The app's update check picks its platform's download.
+# Builds Explorist for Windows, Linux and macOS and publishes all three in
+# one GitHub Release. Either push a tag like v0.2.0 (matching the version
+# in Cargo.toml), or push a commit to the `release` branch and the tag
+# v<Cargo.toml version> is created for it. The app's update check picks
+# its platform's download.
 on:
   push:
     tags: ["v*"]
+    branches: [release]
 
 permissions:
   contents: write
@@ -20,12 +23,17 @@ jobs:
       version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - name: Check the tag matches Cargo.toml
+      - name: Check the version
         id: check
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME doesn't match Cargo.toml version $version"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME doesn't match Cargo.toml version $version"
+              exit 1
+            fi
+          elif git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "::error::v$version is already released; bump the version in Cargo.toml first"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -135,5 +143,8 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ needs.version.outputs.version }}
+          name: Explorist ${{ needs.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
           files: dist/*
           generate_release_notes: true

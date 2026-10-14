@@ -69,7 +69,9 @@ Settings are saved to `%APPDATA%\Explorist\settings.toml`.
 ## Releasing
 
 1. Set the new `version` in `Cargo.toml` and commit.
-2. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`.
+2. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`, or push the
+   commit to the `release` branch (`git push origin main:release`) and the
+   workflow creates the tag.
 3. The Release workflow builds Windows, Linux and macOS packages and
    publishes them in one GitHub Release. Installed copies offer the update within a day (or on
    *Settings → General → Check now*).
