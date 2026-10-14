@@ -12,6 +12,7 @@ pub mod index;
 pub mod jobs;
 pub mod kind;
 pub mod listing;
+pub mod open_with;
 pub mod ops;
 pub mod path_input;
 pub mod places;

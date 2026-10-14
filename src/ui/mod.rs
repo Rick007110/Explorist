@@ -7,6 +7,7 @@ pub mod fonts;
 pub mod grid;
 pub mod icons;
 pub mod menu;
+pub mod open_with;
 pub mod palette;
 pub mod preview;
 pub mod properties;

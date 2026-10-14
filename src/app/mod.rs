@@ -70,6 +70,7 @@ pub struct ViewState {
     pub toast: Option<Toast>,
     pub confirm_delete: Option<Vec<PathBuf>>,
     pub properties: Option<crate::ui::properties::PropertiesState>,
+    pub open_with: Option<crate::ui::open_with::OpenWithState>,
     /// Scroll the focused row into view on the next frame.
     pub scroll_to_focus: bool,
     /// Rows that fit in the list, for Page Up / Page Down.
@@ -347,6 +348,7 @@ impl ExploristApp {
         // Dialogs and the palette handle their own keys.
         if self.view.confirm_delete.is_some()
             || self.view.properties.is_some()
+            || self.view.open_with.is_some()
             || self.view.palette.is_some()
             || self.view.batch.is_some()
         {
@@ -574,6 +576,23 @@ impl ExploristApp {
             Command::TogglePreview => {
                 self.settings.show_preview = !self.settings.show_preview;
                 self.save_settings();
+            }
+            Command::OpenWith => {
+                let files: Vec<PathBuf> = self
+                    .browser
+                    .selected_entries()
+                    .iter()
+                    .filter(|e| !e.is_dir)
+                    .map(|e| e.path.clone())
+                    .collect();
+                if files.is_empty() {
+                    self.toast("Select a file to open".to_owned(), false);
+                } else if crate::fs::open_with::SYSTEM_CHOOSER {
+                    #[cfg(windows)]
+                    crate::fs::open_with::choose(&files[0]);
+                } else {
+                    self.view.open_with = Some(ui::open_with::OpenWithState::new(files));
+                }
             }
             Command::Properties => {
                 let entries = ui::properties::targets(self);
@@ -868,6 +887,7 @@ impl eframe::App for ExploristApp {
         self.expire_toast(&ctx, toast_hovered);
         ui::dialogs::confirm_delete(&ctx, self);
         ui::properties::show(&ctx, self);
+        ui::open_with::show(&ctx, self);
         ui::palette::show(&ctx, self);
         ui::batch_rename::show(&ctx, self);
         ui::update::show(&ctx, self);

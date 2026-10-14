@@ -41,6 +41,8 @@ pub enum Command {
     /// Add the selected folder to Favorites.
     PinFolder,
     TogglePreview,
+    /// Pick an app to open the selected files in.
+    OpenWith,
     /// Size, dates and attributes of the selection or the folder.
     Properties,
     /// Switch between the list and the grid of tiles.
@@ -103,6 +105,7 @@ impl Command {
             Self::TogglePreview => "Toggle preview panel",
             Self::ToggleGrid => "Toggle grid view",
             Self::Properties => "Properties",
+            Self::OpenWith => "Open with…",
             Self::CommandPalette => "Command palette",
             Self::BatchRename => "Batch rename…",
             Self::NewTab => "New tab",
@@ -181,8 +184,9 @@ impl Command {
     ];
 
     /// Commands offered in the palette, in order of usefulness.
-    pub const PALETTE: [Command; 30] = [
+    pub const PALETTE: [Command; 31] = [
         Command::Open,
+        Command::OpenWith,
         Command::Rename,
         Command::BatchRename,
         Command::NewFile,
@@ -220,6 +224,7 @@ impl Command {
         matches!(
             self,
             Self::Open
+                | Self::OpenWith
                 | Self::Rename
                 | Self::Copy
                 | Self::Cut

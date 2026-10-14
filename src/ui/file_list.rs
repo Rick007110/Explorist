@@ -621,8 +621,10 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
     menu::style(ui);
     let many = app.browser.selection.count() > 1;
     let any_folder = app.browser.selected_entries().iter().any(|e| e.is_dir);
+    let any_file = app.browser.selected_entries().iter().any(|e| !e.is_dir);
     let items: &[Option<(Command, &str)>] = &[
         Some((Command::Open, Command::Open.label())),
+        Some((Command::OpenWith, Command::OpenWith.label())),
         Some((Command::OpenInNewTab, Command::OpenInNewTab.label())),
         Some((Command::OpenTerminal, Command::OpenTerminal.label())),
         None,
@@ -648,6 +650,7 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
                 let enabled = match command {
                     Command::Rename => !many,
                     Command::PinFolder | Command::OpenInNewTab => any_folder,
+                    Command::OpenWith => any_file,
                     _ => true,
                 };
                 if menu::item_labeled(ui, &p, label, *command, enabled) {
