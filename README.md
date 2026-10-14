@@ -36,7 +36,7 @@ with rebindable shortcuts, and update checks.
 | Open | Enter (or double-click) |
 | Back / Forward | Alt ← / Alt → (Backspace also goes back) |
 | Up one level | Alt ↑ |
-| Edit path | Ctrl L or Alt D |
+| Edit path | Ctrl L or Alt D (Tab completes folders; anything that isn't a path searches) |
 | Filter by name | Ctrl F (`*` and `?` work as wildcards) |
 | Rename / batch rename | F2 (Tab renames the next item) / Ctrl F2 |
 | New file / New folder | Ctrl N / Ctrl Shift N |

@@ -92,10 +92,16 @@ pub struct ViewState {
     pub paste_detector: keymap::PasteDetector,
 }
 
+#[derive(Default)]
 pub struct PathEdit {
     pub text: String,
     pub error: Option<String>,
     pub just_opened: bool,
+    /// Folders completing `text`, and the one picked with the arrow keys.
+    pub completions: Vec<String>,
+    pub chosen: Option<usize>,
+    /// The text `completions` was worked out for.
+    pub completed_for: Option<String>,
 }
 
 pub struct Rename {
@@ -475,8 +481,8 @@ impl ExploristApp {
             Command::EditPath => {
                 self.view.path_edit = Some(PathEdit {
                     text: self.browser.location().display().to_string(),
-                    error: None,
                     just_opened: true,
+                    ..PathEdit::default()
                 });
             }
             Command::Filter => {
@@ -651,6 +657,14 @@ impl ExploristApp {
                     self.browser.navigate(parent.to_path_buf());
                     self.browser.select_when_loaded(path);
                 }
+            }
+            Err(_) if !path_input::looks_like_path(&edit.text) => {
+                // Words rather than a path: search for files by that name.
+                let query = format!("/{}", edit.text.trim());
+                self.view.path_edit = None;
+                let mut palette = crate::ui::palette::PaletteState::new(&query);
+                palette.selected = 0;
+                self.view.palette = Some(palette);
             }
             Err(message) => edit.error = Some(message),
         }

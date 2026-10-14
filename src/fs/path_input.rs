@@ -43,6 +43,56 @@ pub fn resolve(input: &str, current: &Path) -> Result<Target, String> {
     }
 }
 
+/// Whether `input` reads as a path rather than words to search for: it
+/// has a separator, a drive, or starts with `~`, `%` or `.`.
+pub fn looks_like_path(input: &str) -> bool {
+    let t = input.trim().trim_matches('"');
+    t.contains(['/', '\\'])
+        || t.starts_with(['~', '%', '.'])
+        || (t.len() >= 2 && t.as_bytes()[1] == b':' && t.as_bytes()[0].is_ascii_alphabetic())
+}
+
+/// Folder names that complete what's typed in the path bar, as the full
+/// text to put in the field. The part after the last separator is matched
+/// (case-insensitively) against the folders in the part before it; with no
+/// separator, against the current folder. Dot folders show only when the
+/// typed part starts with a dot. At most `limit`, in natural order.
+pub fn completions(input: &str, current: &Path, limit: usize) -> Vec<String> {
+    let (dir_text, prefix) = match input.rfind(['/', '\\']) {
+        Some(i) => (&input[..=i], &input[i + 1..]),
+        None if is_bare_drive(input) => return Vec::new(),
+        None => ("", input),
+    };
+    let dir = if dir_text.is_empty() {
+        current.to_path_buf()
+    } else {
+        let expanded = expand_home(&expand_env(dir_text));
+        let path = PathBuf::from(&expanded);
+        normalize(&if path.is_relative() {
+            current.join(path)
+        } else {
+            path
+        })
+    };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let wanted = prefix.to_lowercase();
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) || e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.to_lowercase().starts_with(&wanted))
+        .filter(|name| !name.starts_with('.') || prefix.starts_with('.'))
+        .collect();
+    names.sort_by(|a, b| crate::fs::sort::natural_cmp(a, b).then_with(|| a.cmp(b)));
+    names.truncate(limit);
+    names
+        .into_iter()
+        .map(|name| format!("{dir_text}{name}"))
+        .collect()
+}
+
 /// `D:` means the root of D:, not "the current folder on D:".
 fn is_bare_drive(s: &str) -> bool {
     let b = s.as_bytes();
@@ -186,6 +236,59 @@ mod tests {
             );
         }
         assert_eq!(expand_home("~user"), "~user");
+    }
+
+    #[test]
+    fn completes_folders() {
+        let dir = tree();
+        fs::create_dir(dir.path().join("code").join("atlantis-old")).unwrap();
+        fs::create_dir(dir.path().join("code").join(".cache")).unwrap();
+        let sep = std::path::MAIN_SEPARATOR;
+        let code = format!("{}{sep}code{sep}", dir.path().display());
+
+        assert_eq!(
+            completions(&format!("{code}at"), Path::new("/"), 8),
+            [format!("{code}atlantis-old"), format!("{code}atlas")]
+        );
+        assert_eq!(
+            completions(&format!("{code}AT"), Path::new("/"), 1).len(),
+            1,
+            "case-insensitive, limited"
+        );
+        assert!(
+            completions(&format!("{code}notes"), Path::new("/"), 8).is_empty(),
+            "files don't complete"
+        );
+        assert_eq!(
+            completions(&format!("{code}."), Path::new("/"), 8),
+            [format!("{code}.cache")]
+        );
+        assert_eq!(
+            completions("co", dir.path(), 8),
+            ["code"],
+            "relative to the current folder"
+        );
+        assert_eq!(completions("code/at", dir.path(), 8).len(), 2);
+        assert!(completions("nowhere/x", dir.path(), 8).is_empty());
+    }
+
+    #[test]
+    fn tells_paths_from_searches() {
+        for path in [
+            "C:",
+            "C:\\Users",
+            "/home",
+            "./src",
+            "~",
+            "%APPDATA%",
+            "docs/brainstorm",
+            "\"\\\\server\\x\"",
+        ] {
+            assert!(looks_like_path(path), "{path}");
+        }
+        for words in ["brainstorm", "release notes", "Cargo.toml"] {
+            assert!(!looks_like_path(words), "{words}");
+        }
     }
 
     #[test]

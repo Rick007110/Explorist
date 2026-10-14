@@ -7,12 +7,14 @@ use std::path::{Path, PathBuf};
 
 use egui::text::{CCursor, CCursorRange};
 use egui::{
-    Align2, CornerRadius, Frame, Key, Margin, Pos2, Rect, Sense, Stroke, StrokeKind, TextEdit, vec2,
+    Align2, CornerRadius, Frame, Key, Margin, Modifiers, Pos2, Rect, Sense, Stroke, StrokeKind,
+    TextEdit, vec2,
 };
 
 use crate::app::commands::Command;
 use crate::app::keymap;
 use crate::app::{ExploristApp, PathEdit};
+use crate::fs::path_input;
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme::{Palette, radius, size, text};
 use crate::ui::widgets;
@@ -193,8 +195,8 @@ fn path_bar(ui: &mut egui::Ui, app: &mut ExploristApp, width: f32) {
     } else if response.clicked() {
         app.view.path_edit = Some(PathEdit {
             text: app.browser.location().display().to_string(),
-            error: None,
             just_opened: true,
+            ..PathEdit::default()
         });
     }
 }
@@ -307,6 +309,7 @@ fn breadcrumbs(
 
 fn edit_field(ui: &mut egui::Ui, app: &mut ExploristApp, rect: Rect) {
     let p = app.palette;
+    let location = app.browser.location().to_path_buf();
     let Some(edit) = &mut app.view.path_edit else {
         return;
     };
@@ -326,10 +329,58 @@ fn edit_field(ui: &mut egui::Ui, app: &mut ExploristApp, rect: Rect) {
         None => field_rect,
     };
 
+    // Keep the completions in step with the text.
+    if edit.completed_for.as_deref() != Some(edit.text.as_str()) {
+        edit.completions = if edit.just_opened {
+            Vec::new()
+        } else {
+            path_input::completions(&edit.text, &location, 8)
+        };
+        edit.chosen = None;
+        edit.completed_for = Some(edit.text.clone());
+    }
+
+    // Tab and the arrow keys work the completions before the field sees them.
+    let field_id = ui.id().with("path-edit-field");
+    let focused = ui.memory(|m| m.has_focus(field_id));
+    let mut accepted = false;
+    if focused && !edit.completions.is_empty() {
+        let (tab, up, down) = ui.input_mut(|i| {
+            (
+                i.consume_key(Modifiers::NONE, Key::Tab),
+                i.consume_key(Modifiers::NONE, Key::ArrowUp),
+                i.consume_key(Modifiers::NONE, Key::ArrowDown),
+            )
+        });
+        let n = edit.completions.len();
+        if down {
+            edit.chosen = Some(edit.chosen.map_or(0, |c| (c + 1) % n));
+        }
+        if up {
+            edit.chosen = Some(edit.chosen.map_or(n - 1, |c| (c + n - 1) % n));
+        }
+        if tab {
+            // Add a separator so the next level's folders come up.
+            let mut pick = edit.completions[edit.chosen.unwrap_or(0)].clone();
+            if !pick.ends_with(['/', '\\']) {
+                pick.push(if pick.contains('\\') {
+                    '\\'
+                } else {
+                    std::path::MAIN_SEPARATOR
+                });
+            }
+            edit.text = pick;
+            accepted = true;
+        }
+    }
+
     let mut field_ui = ui.new_child(egui::UiBuilder::new().max_rect(field_rect));
     let mut output = {
         let ui = &mut field_ui;
         TextEdit::singleline(&mut edit.text)
+            .id(field_id)
+            // Tab completes instead of moving focus.
+            .lock_focus(true)
             .font(text::mono())
             .text_color(p.text)
             .frame(Frame::NONE)
@@ -348,10 +399,51 @@ fn edit_field(ui: &mut egui::Ui, app: &mut ExploristApp, rect: Rect) {
             .cursor
             .set_char_range(Some(CCursorRange::two(CCursor::new(0), CCursor::new(end))));
         output.state.store(ui.ctx(), response.id);
+    } else if accepted {
+        let end = edit.text.chars().count();
+        output
+            .state
+            .cursor
+            .set_char_range(Some(CCursorRange::one(CCursor::new(end))));
+        output.state.store(ui.ctx(), response.id);
     }
     if response.changed() {
         edit.error = None;
     }
+
+    // The first completion's remaining letters, greyed after the text.
+    let cursor_at_end = output
+        .cursor_range
+        .is_some_and(|c| c.primary.index.0 == edit.text.chars().count() && c.is_empty());
+    if edit.chosen.is_none()
+        && cursor_at_end
+        && response.has_focus()
+        && let Some(first) = edit.completions.first()
+        && first.to_lowercase().starts_with(&edit.text.to_lowercase())
+    {
+        let typed = edit.text.chars().count();
+        let rest: String = first.chars().skip(typed).collect();
+        let width = output.galley.size().x;
+        if !rest.is_empty() && width < field_rect.width() - 40.0 {
+            let ghost = ui.painter().text(
+                Pos2::new(field_rect.left() + width, field_rect.center().y),
+                Align2::LEFT_CENTER,
+                &rest,
+                text::mono(),
+                p.muted,
+            );
+            let tab = widgets::kbd_galley(ui, &p, "Tab");
+            widgets::paint_kbd(
+                ui.painter(),
+                &p,
+                tab,
+                ghost.right() + 8.0,
+                field_rect.center().y,
+                false,
+            );
+        }
+    }
+
     if let Some(g) = error_galley {
         ui.painter().galley(
             Pos2::new(
@@ -363,9 +455,70 @@ fn edit_field(ui: &mut egui::Ui, app: &mut ExploristApp, rect: Rect) {
         );
     }
 
+    // Dropdown of completions under the path bar.
+    let mut clicked = None;
+    let show_list = response.has_focus()
+        && !edit.completions.is_empty()
+        && !(edit.completions.len() == 1 && edit.completions[0] == edit.text);
+    if show_list {
+        egui::Area::new(ui.id().with("path-completions"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(Pos2::new(rect.left(), rect.bottom() + 4.0))
+            .show(ui.ctx(), |ui| {
+                Frame::NONE
+                    .fill(p.raised)
+                    .stroke(Stroke::new(1.0, p.border))
+                    .corner_radius(CornerRadius::same(radius::MD))
+                    .shadow(p.shadow_float())
+                    .inner_margin(Margin::same(4))
+                    .show(ui, |ui| {
+                        ui.set_width(rect.width() - 8.0);
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        for (i, option) in edit.completions.iter().enumerate() {
+                            let (row, r) = ui.allocate_exact_size(
+                                egui::vec2(rect.width() - 8.0, 28.0),
+                                Sense::click(),
+                            );
+                            if edit.chosen == Some(i) || r.hovered() {
+                                ui.painter().rect_filled(
+                                    row,
+                                    CornerRadius::same(radius::SM - 1),
+                                    p.accent_alpha(if p.dark { 0.16 } else { 0.10 }),
+                                );
+                            }
+                            // Dim the folder part; show the name in full.
+                            let split = option.rfind(['/', '\\']).map_or(0, |i| i + 1);
+                            let dir = ui.painter().text(
+                                Pos2::new(row.left() + 10.0, row.center().y),
+                                Align2::LEFT_CENTER,
+                                &option[..split],
+                                text::mono(),
+                                p.muted,
+                            );
+                            ui.painter().text(
+                                Pos2::new(dir.right(), row.center().y),
+                                Align2::LEFT_CENTER,
+                                &option[split..],
+                                crate::ui::fonts::mono_medium(12.5),
+                                p.text,
+                            );
+                            if r.clicked() {
+                                clicked = Some(option.clone());
+                            }
+                        }
+                    });
+            });
+    }
+
     let enter = response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
     let escape = ui.input(|i| i.key_pressed(Key::Escape));
-    if enter {
+    if let Some(choice) = clicked {
+        edit.text = choice;
+        app.submit_path();
+    } else if enter {
+        if let Some(i) = edit.chosen {
+            edit.text = edit.completions[i].clone();
+        }
         app.submit_path();
         if app.view.path_edit.is_some() {
             response.request_focus();
