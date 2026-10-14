@@ -85,6 +85,6 @@ Settings are saved to `%APPDATA%\Explorist\settings.toml`.
 The update check reads the repository's latest release, so it only finds
 releases while the repository (or a release mirror) is public.
 
-## Fonts
+## Fonts and icons
 
-Explorist bundles [Geist and Geist Mono](https://vercel.com/font) under the SIL Open Font License; see `assets/fonts/OFL.txt`.
+Explorist bundles [Geist and Geist Mono](https://vercel.com/font) under the SIL Open Font License (see `assets/fonts/OFL.txt`) and icons from [Lucide](https://lucide.dev) under the ISC License (see `assets/icons/lucide/LICENSE`).

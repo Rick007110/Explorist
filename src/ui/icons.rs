@@ -1,16 +1,17 @@
-//! The design's outline icons, drawn with egui's painter.
+//! Icons: Lucide (https://lucide.dev, ISC license) for everything but the
+//! window buttons, which are drawn to look like the system's own.
 //!
-//! Each icon is drawn on a 16-unit grid (the design's SVG viewBox) and
-//! scaled to the target rect, with a 1.5-unit round-capped stroke. Icons
-//! are told apart by silhouette, not color.
+//! The SVGs are rasterized at the size and stroke asked for, in white, and
+//! tinted when painted, so one texture serves every color.
 
-use std::f32::consts::{FRAC_PI_2, PI};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
-use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, vec2};
+use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, TextureHandle, vec2};
 
 use crate::fs::kind::FileKind;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Icon {
     // Files
     Folder,
@@ -42,6 +43,7 @@ pub enum Icon {
     Branch,
     Grid,
     List,
+    Settings,
     // Places
     Home,
     Desktop,
@@ -73,15 +75,61 @@ impl Icon {
             FileKind::Other => Self::File,
         }
     }
+
+    /// The Lucide SVG, or `None` for the window buttons.
+    fn svg(self) -> Option<&'static str> {
+        macro_rules! lucide {
+            ($name:literal) => {
+                include_str!(concat!("../../assets/icons/lucide/", $name, ".svg"))
+            };
+        }
+        Some(match self {
+            Self::Folder => lucide!("folder"),
+            Self::Code => lucide!("file-code"),
+            Self::Text => lucide!("file-text"),
+            Self::Config => lucide!("file-cog"),
+            Self::Lock => lucide!("lock"),
+            Self::Pdf => lucide!("file-type"),
+            Self::Image => lucide!("file-image"),
+            Self::Vector => lucide!("pen-tool"),
+            Self::Archive => lucide!("file-archive"),
+            Self::Audio => lucide!("file-audio"),
+            Self::Video => lucide!("file-video"),
+            Self::Exe => lucide!("app-window"),
+            Self::File => lucide!("file"),
+            Self::Back => lucide!("arrow-left"),
+            Self::Forward => lucide!("arrow-right"),
+            Self::Up | Self::SortUp => lucide!("arrow-up"),
+            Self::SortDown => lucide!("arrow-down"),
+            Self::Refresh => lucide!("refresh-cw"),
+            Self::Filter => lucide!("list-filter"),
+            Self::Close => lucide!("x"),
+            Self::Plus => lucide!("plus"),
+            Self::Check => lucide!("check"),
+            Self::Warning => lucide!("triangle-alert"),
+            Self::PreviewPanel => lucide!("panel-right"),
+            Self::Branch => lucide!("git-branch"),
+            Self::Grid => lucide!("layout-grid"),
+            Self::List => lucide!("list"),
+            Self::Settings => lucide!("settings"),
+            Self::Home => lucide!("house"),
+            Self::Desktop => lucide!("monitor"),
+            Self::Downloads => lucide!("folder-down"),
+            Self::Documents => lucide!("files"),
+            Self::Drive => lucide!("hard-drive"),
+            Self::Minimize | Self::Maximize | Self::Restore | Self::CloseWindow => return None,
+        })
+    }
 }
 
-/// Draws `icon` centered in `rect` at `size` points.
+/// Draws `icon` centered in `rect` at `size` points, with Lucide's own
+/// line weight (2 units of 24).
 pub fn paint(painter: &Painter, rect: Rect, icon: Icon, size: f32, color: Color32) {
-    paint_stroked(painter, rect, icon, size, 1.5 * size / 16.0, color);
+    paint_stroked(painter, rect, icon, size, 2.0 * size / 24.0, color);
 }
 
-/// Like [`paint`], with a set line width, for big icons that would look
-/// heavy with lines scaled up.
+/// Like [`paint`], with lines `width` points wide, for big icons that would
+/// look heavy with lines scaled up.
 pub fn paint_stroked(
     painter: &Painter,
     rect: Rect,
@@ -90,342 +138,182 @@ pub fn paint_stroked(
     width: f32,
     color: Color32,
 ) {
-    let grid = match icon {
-        Icon::Minimize | Icon::Maximize | Icon::Restore | Icon::CloseWindow => 10.0,
-        _ => 16.0,
+    let target = Rect::from_center_size(rect.center(), vec2(size, size));
+    let Some(svg) = icon.svg() else {
+        window_button(painter, target, icon, color);
+        return;
     };
-    let origin = rect.center() - vec2(size, size) / 2.0;
-    let pen = Pen {
-        painter,
-        origin,
-        scale: size / grid,
-        stroke: Stroke::new(width, color),
-        shapes: Vec::new(),
-    };
-    draw(pen, icon);
+    let ppp = painter.ctx().pixels_per_point();
+    let pixels = (size * ppp).round().max(1.0) as u32;
+    // In twentieths of a viewBox unit, so near-equal sizes share a texture.
+    let stroke = ((width * 24.0 / size) * 20.0).round() as u32;
+    let key = (icon, pixels, stroke);
+
+    type Cache = HashMap<(Icon, u32, u32), Option<TextureHandle>>;
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let texture = cache.entry(key).or_insert_with(|| {
+        let image = rasterize(svg, pixels, stroke as f32 / 20.0)?;
+        Some(painter.ctx().load_texture(
+            format!("icon:{icon:?}:{pixels}:{stroke}"),
+            image,
+            egui::TextureOptions::LINEAR,
+        ))
+    });
+    if let Some(texture) = texture {
+        painter.image(
+            texture.id(),
+            target,
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            color,
+        );
+    }
 }
 
-/// Collects shapes in grid units and paints them in one go.
-struct Pen<'a> {
-    painter: &'a Painter,
-    origin: Pos2,
-    scale: f32,
-    stroke: Stroke,
-    shapes: Vec<Shape>,
+/// Renders a Lucide SVG in white at `pixels` square, with `stroke` (in
+/// viewBox units) instead of its usual 2.
+fn rasterize(svg: &str, pixels: u32, stroke: f32) -> Option<egui::ColorImage> {
+    let svg = svg
+        .replace("stroke=\"currentColor\"", "stroke=\"#ffffff\"")
+        .replace("stroke-width=\"2\"", &format!("stroke-width=\"{stroke}\""));
+    let tree = resvg::usvg::Tree::from_str(&svg, &resvg::usvg::Options::default()).ok()?;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(pixels, pixels)?;
+    let scale = pixels as f32 / tree.size().width();
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    Some(egui::ColorImage::from_rgba_premultiplied(
+        [pixels as usize, pixels as usize],
+        pixmap.data(),
+    ))
 }
 
-impl Pen<'_> {
-    fn p(&self, x: f32, y: f32) -> Pos2 {
-        self.origin + vec2(x, y) * self.scale
-    }
-
-    /// An open polyline with round joins and caps.
-    fn line(&mut self, points: &[(f32, f32)]) {
-        let pts: Vec<Pos2> = points.iter().map(|&(x, y)| self.p(x, y)).collect();
-        self.caps(&pts);
-        self.shapes.push(Shape::line(pts, self.stroke));
-    }
-
-    /// A closed polygon outline.
-    fn closed(&mut self, points: &[(f32, f32)]) {
-        let pts: Vec<Pos2> = points.iter().map(|&(x, y)| self.p(x, y)).collect();
-        self.caps(&pts);
-        self.shapes.push(Shape::closed_line(pts, self.stroke));
-    }
-
-    /// egui strokes have square ends; dots at each vertex give the design's
-    /// round caps and joins.
-    fn caps(&mut self, pts: &[Pos2]) {
-        let r = self.stroke.width / 2.0;
-        for &pt in pts {
-            self.shapes
-                .push(Shape::circle_filled(pt, r, self.stroke.color));
-        }
-    }
-
-    /// A dot: the design's zero-length round-capped segments.
-    fn dot(&mut self, x: f32, y: f32) {
-        let r = self.stroke.width / 2.0;
-        self.shapes
-            .push(Shape::circle_filled(self.p(x, y), r, self.stroke.color));
-    }
-
-    fn rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32) {
-        let rect = Rect::from_min_size(self.p(x, y), vec2(w, h) * self.scale);
-        self.shapes.push(Shape::rect_stroke(
-            rect,
-            radius * self.scale,
-            self.stroke,
+/// Minimize, maximize, restore and close, drawn on a 10-unit grid like the
+/// system's caption buttons.
+fn window_button(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
+    let scale = rect.width() / 10.0;
+    let p = |x: f32, y: f32| rect.min + vec2(x, y) * scale;
+    let stroke = Stroke::new(1.0, color);
+    let shapes = match icon {
+        Icon::Minimize => vec![Shape::line_segment([p(0.5, 5.0), p(9.5, 5.0)], stroke)],
+        Icon::Maximize => vec![Shape::rect_stroke(
+            Rect::from_min_max(p(0.6, 0.6), p(9.4, 9.4)),
+            1.5 * scale,
+            stroke,
             egui::StrokeKind::Middle,
-        ));
-    }
-
-    fn circle(&mut self, cx: f32, cy: f32, r: f32) {
-        self.shapes.push(Shape::circle_stroke(
-            self.p(cx, cy),
-            r * self.scale,
-            self.stroke,
-        ));
-    }
-
-    fn fill_triangle(&mut self, points: [(f32, f32); 3]) {
-        let pts = points.iter().map(|&(x, y)| self.p(x, y)).collect();
-        self.shapes
-            .push(Shape::convex_polygon(pts, self.stroke.color, Stroke::NONE));
-    }
-
-    /// Points along an arc, angles in radians (0 = right, clockwise in
-    /// screen space), for building paths.
-    fn arc(cx: f32, cy: f32, r: f32, from: f32, to: f32) -> Vec<(f32, f32)> {
-        // About one segment per 10°, so big arcs stay round.
-        let steps = (((to - from).abs() / (PI / 18.0)).ceil() as usize).max(8);
-        (0..=steps)
-            .map(|i| {
-                let a = from + (to - from) * i as f32 / steps as f32;
-                (cx + r * a.cos(), cy + r * a.sin())
-            })
-            .collect()
-    }
-
-    fn finish(self) {
-        self.painter.extend(self.shapes);
-    }
-}
-
-/// The page outline shared by document icons, with its folded corner.
-fn page(pen: &mut Pen<'_>) {
-    pen.closed(&[
-        (4.0, 1.75),
-        (9.0, 1.75),
-        (12.25, 5.0),
-        (12.25, 14.25),
-        (4.0, 14.25),
-    ]);
-    pen.line(&[(9.0, 1.75), (9.0, 5.0), (12.25, 5.0)]);
-}
-
-fn draw(mut pen: Pen<'_>, icon: Icon) {
-    match icon {
-        Icon::Folder => {
-            // M2 4.5 A1.5 1.5 0 0 1 3.5 3 h3 l1.5 1.5 h4.5 A1.5 1.5 0 0 1 14 6
-            // v5.5 a1.5 1.5 0 0 1 -1.5 1.5 h-9 A1.5 1.5 0 0 1 2 11.5 z
-            let mut pts = Pen::arc(3.5, 4.5, 1.5, PI, 1.5 * PI);
-            pts.extend([(6.5, 3.0), (8.0, 4.5)]);
-            pts.extend(Pen::arc(12.5, 6.0, 1.5, 1.5 * PI, 2.0 * PI));
-            pts.extend(Pen::arc(12.5, 11.5, 1.5, 0.0, FRAC_PI_2));
-            pts.extend(Pen::arc(3.5, 11.5, 1.5, FRAC_PI_2, PI));
-            pen.closed(&pts);
-        }
-        Icon::Code => {
-            page(&mut pen);
-            pen.line(&[(6.75, 8.25), (5.5, 9.75), (6.75, 11.25)]);
-            pen.line(&[(9.5, 8.25), (10.75, 9.75), (9.5, 11.25)]);
-        }
-        Icon::Text => {
-            page(&mut pen);
-            pen.line(&[(6.0, 8.0), (10.0, 8.0)]);
-            pen.line(&[(6.0, 10.0), (10.0, 10.0)]);
-            pen.line(&[(6.0, 12.0), (8.5, 12.0)]);
-        }
-        Icon::Documents => {
-            page(&mut pen);
-            pen.line(&[(6.0, 8.0), (10.0, 8.0)]);
-            pen.line(&[(6.0, 10.5), (10.0, 10.5)]);
-        }
-        Icon::File => page(&mut pen),
-        Icon::Pdf => {
-            page(&mut pen);
-            pen.rect(5.75, 8.25, 4.5, 3.5, 0.75);
-        }
-        Icon::Config => {
-            pen.line(&[(2.5, 4.5), (6.5, 4.5)]);
-            pen.line(&[(9.5, 4.5), (13.5, 4.5)]);
-            pen.line(&[(2.5, 11.5), (9.5, 11.5)]);
-            pen.line(&[(12.5, 11.5), (13.5, 11.5)]);
-            pen.circle(8.0, 4.5, 1.5);
-            pen.circle(11.0, 11.5, 1.5);
-        }
-        Icon::Lock => {
-            pen.rect(3.5, 7.0, 9.0, 6.75, 1.5);
-            let mut shackle = vec![(5.5, 7.0)];
-            shackle.extend(Pen::arc(8.0, 5.0, 2.5, PI, 2.0 * PI));
-            shackle.push((10.5, 7.0));
-            pen.line(&shackle);
-        }
-        Icon::Image => {
-            pen.rect(2.0, 2.5, 12.0, 11.0, 1.5);
-            pen.circle(6.0, 6.25, 1.25);
-            pen.line(&[
-                (2.5, 12.0),
-                (6.0, 8.5),
-                (8.5, 11.0),
-                (10.5, 9.0),
-                (13.5, 12.0),
-            ]);
-        }
-        Icon::Vector => {
-            pen.line(&[(3.0, 13.0), (8.0, 3.0), (13.0, 13.0)]);
-            pen.rect(1.75, 11.75, 2.5, 2.5, 0.5);
-            pen.rect(11.75, 11.75, 2.5, 2.5, 0.5);
-            pen.rect(6.75, 1.75, 2.5, 2.5, 0.5);
-        }
-        Icon::Archive => {
-            pen.rect(2.5, 2.5, 11.0, 11.0, 1.5);
-            pen.line(&[(8.0, 2.5), (8.0, 4.0)]);
-            pen.line(&[(8.0, 5.0), (8.0, 6.5)]);
-            pen.line(&[(8.0, 7.5), (8.0, 9.0)]);
-            pen.rect(6.75, 9.25, 2.5, 2.5, 0.5);
-        }
-        Icon::Audio => {
-            pen.line(&[(6.0, 12.0), (6.0, 4.0), (13.0, 2.5), (13.0, 10.5)]);
-            pen.circle(4.5, 12.0, 1.5);
-            pen.circle(11.5, 10.5, 1.5);
-        }
-        Icon::Video => {
-            pen.rect(2.0, 3.0, 12.0, 10.0, 1.5);
-            pen.closed(&[(6.75, 6.0), (6.75, 10.0), (10.25, 8.0)]);
-        }
-        Icon::Exe => {
-            pen.rect(2.0, 2.5, 12.0, 11.0, 1.5);
-            pen.line(&[(2.0, 5.5), (14.0, 5.5)]);
-            pen.line(&[(5.0, 8.5), (7.0, 10.0), (5.0, 11.5)]);
-            pen.line(&[(8.5, 11.5), (11.0, 11.5)]);
-        }
-        Icon::Back => pen.line(&[(10.0, 3.5), (5.5, 8.0), (10.0, 12.5)]),
-        Icon::Forward => pen.line(&[(6.0, 3.5), (10.5, 8.0), (6.0, 12.5)]),
-        Icon::Up => {
-            pen.line(&[(8.0, 13.0), (8.0, 3.5)]);
-            pen.line(&[(3.5, 8.0), (8.0, 3.5), (12.5, 8.0)]);
-        }
-        Icon::Refresh => {
-            // Not in the design; built from its arrow style. Three quarters
-            // of a circle, clockwise from the right to the top, with the
-            // arrowhead pointing into the gap.
-            let pts = Pen::arc(8.0, 8.5, 5.0, 0.0, 1.5 * PI);
-            pen.line(&pts);
-            pen.line(&[(6.5, 1.5), (8.5, 3.5), (6.5, 5.5)]);
-        }
-        Icon::Filter => {
-            pen.line(&[(2.5, 4.0), (13.5, 4.0)]);
-            pen.line(&[(4.5, 8.0), (11.5, 8.0)]);
-            pen.line(&[(6.5, 12.0), (9.5, 12.0)]);
-        }
-        Icon::Close => {
-            pen.line(&[(4.0, 4.0), (12.0, 12.0)]);
-            pen.line(&[(12.0, 4.0), (4.0, 12.0)]);
-        }
-        Icon::Plus => {
-            pen.line(&[(8.0, 2.75), (8.0, 13.25)]);
-            pen.line(&[(2.75, 8.0), (13.25, 8.0)]);
-        }
-        Icon::SortUp => {
-            pen.line(&[(8.0, 12.7), (8.0, 3.3)]);
-            pen.line(&[(4.0, 7.3), (8.0, 3.3), (12.0, 7.3)]);
-        }
-        Icon::SortDown => {
-            pen.line(&[(8.0, 3.3), (8.0, 12.7)]);
-            pen.line(&[(4.0, 8.7), (8.0, 12.7), (12.0, 8.7)]);
-        }
-        Icon::Check => pen.line(&[(3.5, 8.5), (6.5, 11.5), (12.5, 4.5)]),
-        Icon::Branch => {
-            pen.circle(4.5, 3.5, 1.5);
-            pen.circle(4.5, 12.5, 1.5);
-            pen.circle(11.5, 5.5, 1.5);
-            pen.line(&[(4.5, 5.0), (4.5, 11.0)]);
-            // M11.5 7 c0 2.5 -2 3 -7 4: a gentle curve down to the trunk.
-            let curve: Vec<(f32, f32)> = (0..=8)
-                .map(|i| {
-                    let t = i as f32 / 8.0;
-                    let u = 1.0 - t;
-                    let x = u * u * u * 11.5
-                        + 3.0 * u * u * t * 11.5
-                        + 3.0 * u * t * t * 9.5
-                        + t * t * t * 4.5;
-                    let y = u * u * u * 7.0
-                        + 3.0 * u * u * t * 9.5
-                        + 3.0 * u * t * t * 10.0
-                        + t * t * t * 11.0;
-                    (x, y)
-                })
-                .collect();
-            pen.line(&curve);
-        }
-        Icon::Grid => {
-            pen.rect(2.5, 2.5, 4.5, 4.5, 1.0);
-            pen.rect(9.0, 2.5, 4.5, 4.5, 1.0);
-            pen.rect(2.5, 9.0, 4.5, 4.5, 1.0);
-            pen.rect(9.0, 9.0, 4.5, 4.5, 1.0);
-        }
-        Icon::List => {
-            pen.line(&[(5.5, 4.0), (13.5, 4.0)]);
-            pen.line(&[(5.5, 8.0), (13.5, 8.0)]);
-            pen.line(&[(5.5, 12.0), (13.5, 12.0)]);
-            pen.line(&[(2.5, 4.0), (3.0, 4.0)]);
-            pen.line(&[(2.5, 8.0), (3.0, 8.0)]);
-            pen.line(&[(2.5, 12.0), (3.0, 12.0)]);
-        }
-        Icon::PreviewPanel => {
-            pen.rect(2.0, 2.5, 12.0, 11.0, 1.5);
-            pen.line(&[(10.0, 2.5), (10.0, 13.5)]);
-        }
-        Icon::Warning => {
-            pen.closed(&[(8.0, 2.5), (14.0, 13.0), (2.0, 13.0)]);
-            pen.line(&[(8.0, 6.5), (8.0, 9.5)]);
-            pen.dot(8.0, 11.5);
-        }
-        Icon::Home => {
-            pen.closed(&[
-                (2.5, 7.0),
-                (8.0, 2.5),
-                (13.5, 7.0),
-                (13.5, 13.5),
-                (2.5, 13.5),
-            ]);
-            pen.line(&[(6.5, 13.5), (6.5, 10.0), (9.5, 10.0), (9.5, 13.5)]);
-        }
-        Icon::Desktop => {
-            pen.rect(2.0, 2.5, 12.0, 8.5, 1.5);
-            pen.line(&[(5.5, 13.5), (10.5, 13.5)]);
-            pen.line(&[(8.0, 11.0), (8.0, 13.5)]);
-        }
-        Icon::Downloads => {
-            pen.line(&[(8.0, 2.5), (8.0, 10.5)]);
-            pen.line(&[(4.5, 7.5), (8.0, 11.0), (11.5, 7.5)]);
-            pen.line(&[(2.5, 13.5), (13.5, 13.5)]);
-        }
-        Icon::Drive => {
-            pen.rect(2.0, 4.0, 12.0, 8.0, 1.5);
-            pen.dot(11.0, 8.0);
-        }
-        Icon::Minimize => pen.line(&[(0.5, 5.0), (9.5, 5.0)]),
-        Icon::Maximize => pen.rect(0.6, 0.6, 8.8, 8.8, 1.5),
-        Icon::Restore => {
-            pen.rect(0.6, 2.6, 6.8, 6.8, 1.2);
-            pen.line(&[(2.6, 2.6), (2.6, 0.6), (9.4, 0.6), (9.4, 7.4), (7.4, 7.4)]);
-        }
-        Icon::CloseWindow => {
-            pen.line(&[(0.5, 0.5), (9.5, 9.5)]);
-            pen.line(&[(9.5, 0.5), (0.5, 9.5)]);
-        }
-    }
-    pen.finish();
+        )],
+        Icon::Restore => vec![
+            Shape::rect_stroke(
+                Rect::from_min_max(p(0.6, 2.6), p(7.4, 9.4)),
+                1.2 * scale,
+                stroke,
+                egui::StrokeKind::Middle,
+            ),
+            Shape::line(
+                vec![
+                    p(2.6, 2.6),
+                    p(2.6, 0.6),
+                    p(9.4, 0.6),
+                    p(9.4, 7.4),
+                    p(7.4, 7.4),
+                ],
+                stroke,
+            ),
+        ],
+        _ => vec![
+            Shape::line_segment([p(0.5, 0.5), p(9.5, 9.5)], stroke),
+            Shape::line_segment([p(9.5, 0.5), p(0.5, 9.5)], stroke),
+        ],
+    };
+    painter.extend(shapes);
 }
 
 /// The filled triangle used for menu chevrons.
 pub fn paint_chevron_down(painter: &Painter, center: Pos2, color: Color32) {
-    let pen = Pen {
-        painter,
-        origin: center - vec2(4.0, 4.0),
-        scale: 0.5,
-        stroke: Stroke::new(1.0, color),
-        shapes: Vec::new(),
-    };
-    let mut pen = pen;
-    pen.fill_triangle([(4.0, 6.0), (12.0, 6.0), (8.0, 10.0)]);
-    pen.finish();
+    painter.add(Shape::convex_polygon(
+        vec![
+            center + vec2(-2.0, -1.0),
+            center + vec2(2.0, -1.0),
+            center + vec2(0.0, 1.0),
+        ],
+        color,
+        Stroke::NONE,
+    ));
 }
 
 /// Size of the area an icon of `size` needs.
 pub fn icon_rect(center: Pos2, size: f32) -> Rect {
     Rect::from_center_size(center, vec2(size, size))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_lucide_icon_renders() {
+        let all = [
+            Icon::Folder,
+            Icon::Code,
+            Icon::Text,
+            Icon::Config,
+            Icon::Lock,
+            Icon::Pdf,
+            Icon::Image,
+            Icon::Vector,
+            Icon::Archive,
+            Icon::Audio,
+            Icon::Video,
+            Icon::Exe,
+            Icon::File,
+            Icon::Back,
+            Icon::Forward,
+            Icon::Up,
+            Icon::Refresh,
+            Icon::Filter,
+            Icon::Close,
+            Icon::Plus,
+            Icon::SortUp,
+            Icon::SortDown,
+            Icon::Check,
+            Icon::Warning,
+            Icon::PreviewPanel,
+            Icon::Branch,
+            Icon::Grid,
+            Icon::List,
+            Icon::Settings,
+            Icon::Home,
+            Icon::Desktop,
+            Icon::Downloads,
+            Icon::Documents,
+            Icon::Drive,
+        ];
+        for icon in all {
+            let image = rasterize(icon.svg().unwrap(), 32, 2.0)
+                .unwrap_or_else(|| panic!("{icon:?} didn't render"));
+            assert_eq!(image.size, [32, 32]);
+            let inked = image.pixels.iter().filter(|p| p.a() > 0).count();
+            assert!(inked > 20, "{icon:?} came out empty");
+        }
+        assert_eq!(Icon::Minimize.svg(), None);
+    }
+
+    #[test]
+    fn stroke_width_changes_the_ink() {
+        let svg = Icon::Folder.svg().unwrap();
+        let ink = |w| {
+            rasterize(svg, 48, w)
+                .unwrap()
+                .pixels
+                .iter()
+                .map(|p| p.a() as u32)
+                .sum::<u32>()
+        };
+        assert!(ink(1.0) < ink(2.0));
+    }
 }

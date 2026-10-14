@@ -123,7 +123,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 if widgets::icon_button(
                     ui,
                     &p,
-                    Icon::Config,
+                    Icon::Settings,
                     &tooltip(Command::OpenSettings),
                     true,
                     false,

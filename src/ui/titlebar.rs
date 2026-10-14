@@ -1,10 +1,7 @@
 //! The 40 px top bar: logo, the (single) tab, and window buttons. It ships
 //! with one tab so adding tabs later changes no layout.
 
-use egui::{
-    Align2, Color32, CornerRadius, Frame, Pos2, Rect, Sense, Stroke, StrokeKind, ViewportCommand,
-    vec2,
-};
+use egui::{Align2, Color32, CornerRadius, Frame, Pos2, Rect, Sense, ViewportCommand, vec2};
 
 use crate::app::ExploristApp;
 use crate::ui::icons::{self, Icon};
@@ -44,7 +41,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 Pos2::new(bar.left() + inset + 12.0 + 9.0, bar.center().y),
                 vec2(18.0, 18.0),
             );
-            paint_logo(ui.painter(), logo, p.accent);
+            paint_logo(ui.painter(), logo);
 
             // Tabs, then Settings while it's open, then "+".
             let mut x = logo.right() + 14.0;
@@ -87,7 +84,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                     max_width: 160.0,
                 };
                 let (rect, settings) =
-                    tab(ui, &p, x, "Settings", Icon::Config, style, "settings-tab");
+                    tab(ui, &p, x, "Settings", Icon::Settings, style, "settings-tab");
                 x = rect.right() + 2.0;
                 if settings.closed {
                     app.view.settings_open = false;
@@ -315,18 +312,25 @@ enum WindowButton {
     Close,
 }
 
-/// The app mark: a rounded square with three lines, in the accent.
-fn paint_logo(painter: &egui::Painter, rect: Rect, color: Color32) {
-    let s = rect.width() / 18.0;
-    let stroke = Stroke::new(1.5 * s, color);
-    painter.rect_stroke(
-        Rect::from_min_size(rect.min + vec2(1.5, 1.5) * s, vec2(15.0, 15.0) * s),
-        4.0 * s,
-        stroke,
-        StrokeKind::Middle,
-    );
-    for (y, len) in [(6.5, 7.0), (9.0, 7.0), (11.5, 4.0)] {
-        let a = rect.min + vec2(5.5, y) * s;
-        painter.line_segment([a, a + vec2(len, 0.0) * s], stroke);
+/// The app icon, small.
+fn paint_logo(painter: &egui::Painter, rect: Rect) {
+    static TEXTURE: std::sync::OnceLock<Option<egui::TextureHandle>> = std::sync::OnceLock::new();
+    let texture = TEXTURE.get_or_init(|| {
+        let png = include_bytes!("../../assets/icon/icon-256.png");
+        let image = image::load_from_memory(png).ok()?.into_rgba8();
+        let size = [image.width() as usize, image.height() as usize];
+        Some(painter.ctx().load_texture(
+            "app-icon",
+            egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw()),
+            egui::TextureOptions::LINEAR,
+        ))
+    });
+    if let Some(texture) = texture {
+        painter.image(
+            texture.id(),
+            rect,
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            Color32::WHITE,
+        );
     }
 }

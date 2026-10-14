@@ -287,7 +287,7 @@ fn command_icon(command: Command) -> Icon {
         Command::ToggleGrid => Icon::Grid,
         Command::Properties => Icon::File,
         Command::OpenWith => Icon::Exe,
-        Command::OpenSettings => Icon::Config,
+        Command::OpenSettings => Icon::Settings,
         Command::OpenTerminal => Icon::Exe,
         Command::RecentPlaces => Icon::Home,
         _ => Icon::Check,
