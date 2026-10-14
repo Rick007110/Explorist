@@ -11,7 +11,10 @@ Download from the latest release:
   `explorist.exe`. Windows SmartScreen may warn because the build isn't
   signed; choose *More info → Run anyway*.
 - **Linux:** `explorist-<version>-linux-x86_64.tar.gz`. Unpack and run
-  `explorist` (X11 or Wayland).
+  `explorist` (X11 or Wayland). To add it to your app menu, copy
+  `explorist` to `~/.local/bin`, `explorist.png` to
+  `~/.local/share/icons/` and `explorist.desktop` to
+  `~/.local/share/applications/`.
 - **macOS:** `explorist-<version>-macos-universal.zip` (Apple Silicon and
   Intel). Unzip and move `Explorist.app` to Applications. The app isn't
   notarized, so the first time right-click it and choose *Open*, or run

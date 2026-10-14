@@ -79,6 +79,17 @@ jobs:
           mkdir "$dir"
           cp target/release/explorist README.md "$dir/"
           cp assets/fonts/OFL.txt "$dir/FONTS-OFL.txt"
+          cp assets/icon/icon-256.png "$dir/explorist.png"
+          cat > "$dir/explorist.desktop" <<DESKTOP
+          [Desktop Entry]
+          Type=Application
+          Name=Explorist
+          Comment=Fast, keyboard-friendly file manager
+          Exec=explorist %U
+          Icon=explorist
+          Categories=System;FileManager;Utility;
+          MimeType=inode/directory;
+          DESKTOP
           strip "$dir/explorist"
           tar -czf "explorist-$VERSION-linux-x86_64.tar.gz" "$dir"
       - uses: actions/upload-artifact@v4
@@ -108,6 +119,7 @@ jobs:
             target/x86_64-apple-darwin/release/explorist \
             -output "$app/Contents/MacOS/explorist"
           cp assets/fonts/OFL.txt "$app/Contents/Resources/FONTS-OFL.txt"
+          cp assets/icon/icon.icns "$app/Contents/Resources/Explorist.icns"
           cat > "$app/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -117,6 +129,7 @@ jobs:
             <key>CFBundleDisplayName</key><string>Explorist</string>
             <key>CFBundleIdentifier</key><string>io.github.rick007110.explorist</string>
             <key>CFBundleExecutable</key><string>explorist</string>
+            <key>CFBundleIconFile</key><string>Explorist</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>$VERSION</string>
             <key>CFBundleVersion</key><string>$VERSION</string>
