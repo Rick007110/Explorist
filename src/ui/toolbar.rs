@@ -49,6 +49,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                         app.browser.can_go_forward(),
                     ),
                     (Icon::Up, Command::GoUp, app.browser.can_go_up()),
+                    (Icon::Refresh, Command::Refresh, true),
                 ];
                 for (icon, command, enabled) in nav {
                     let tip = tooltip(command);
@@ -59,7 +60,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 ui.add_space(10.0);
 
                 // Path bar takes what's left after the right-hand buttons.
-                let right_width = 5.0 * size::BUTTON + 4.0 * 2.0;
+                let right_width = 4.0 * size::BUTTON + 3.0 * 2.0;
                 let width = (ui.available_width() - right_width - 10.0).max(120.0);
                 path_bar(ui, app, width);
 
@@ -107,18 +108,6 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 .clicked()
                 {
                     app.run(&ctx, Command::TogglePreview);
-                }
-                if widgets::icon_button(
-                    ui,
-                    &p,
-                    Icon::Refresh,
-                    &tooltip(Command::Refresh),
-                    true,
-                    false,
-                )
-                .clicked()
-                {
-                    app.run(&ctx, Command::Refresh);
                 }
                 if widgets::icon_button(
                     ui,

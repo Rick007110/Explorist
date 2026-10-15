@@ -6,6 +6,9 @@ shows the first points.
 
 ## 0.3.1
 
+### Changed
+- The refresh button sits next to back, forward and up.
+
 ### Fixed
 - Backspace in a search or text field went back to the previous folder instead of deleting a character.
 
