@@ -6,7 +6,13 @@ shows the first points.
 
 ## 0.3.1
 
+### New
+- **Search this folder or everywhere**: file search (Ctrl P, then `/`, or typing a name in the path bar) can look in the open folder and everything inside it, or on every drive of the device. Switch with the buttons in the search box or Ctrl E; the choice is remembered. Searching everywhere lists the device's file names in the background once, using all processor cores, so later searches are near-instant.
+
 ### Changed
+- **Better file search**: only names that contain what you typed are found ("park" finds "park.jpg" and "Parking lot", not any name with those letters somewhere). Several words must all appear. Exact names come first, then names that start with the text.
+- Results show the name first and its folder beside it, and the list scrolls.
+- A new tab opens at your Home folder instead of copying the current tab.
 - The refresh button sits next to back, forward and up.
 
 ### Fixed

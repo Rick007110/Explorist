@@ -67,6 +67,9 @@ pub struct ExploristApp {
     /// When the drive list was last read, to notice drives coming and going.
     drives_read: Instant,
     pub(crate) folder_sizes: sizes::FolderSizes,
+    /// Every name on the device, for searching Everywhere; built on first
+    /// use and kept while Explorist runs.
+    pub(crate) device_index: Option<(Instant, crate::fs::index::NameIndex)>,
 }
 
 /// A background task's outcome, for a toast.
@@ -237,6 +240,7 @@ impl ExploristApp {
             notices: std::sync::mpsc::channel(),
             drives_read: Instant::now(),
             folder_sizes: Default::default(),
+            device_index: None,
         };
         // Reopen the other tabs from last time.
         if app.settings.start_in == StartIn::LastFolder && std::env::args_os().nth(1).is_none() {
@@ -378,6 +382,67 @@ impl ExploristApp {
                 ctx.request_repaint();
             })
             .ok();
+    }
+
+    /// Starts listing every name on the device, or again when the list is
+    /// old, for searching Everywhere.
+    pub(crate) fn ensure_device_index(&mut self) {
+        const MAX_AGE: Duration = Duration::from_secs(15 * 60);
+        if let Some((built, index)) = &self.device_index
+            && (!index.is_done() || built.elapsed() < MAX_AGE)
+        {
+            return;
+        }
+        let drives = self.drives.lock().map(|d| d.clone()).unwrap_or_default();
+        // Network and disc drives are slow and rarely what's wanted.
+        let roots: Vec<PathBuf> = drives
+            .iter()
+            .filter(|d| {
+                !matches!(
+                    d.kind,
+                    places::DriveKind::Network | places::DriveKind::Optical
+                )
+            })
+            .map(|d| d.root.clone())
+            .collect();
+        let roots = if roots.is_empty() {
+            vec![PathBuf::from(if cfg!(windows) { "C:\\" } else { "/" })]
+        } else {
+            roots
+        };
+        // System areas that are virtual, or the same files again.
+        let skip: Vec<PathBuf> = if cfg!(target_os = "macos") {
+            [
+                "/System/Volumes",
+                "/Volumes",
+                "/dev",
+                "/private/var/vm",
+                "/cores",
+            ]
+            .iter()
+            .map(PathBuf::from)
+            .collect()
+        } else if cfg!(windows) {
+            Vec::new()
+        } else {
+            [
+                "/proc",
+                "/sys",
+                "/dev",
+                "/run",
+                "/snap",
+                "/var/lib/docker",
+                "/var/lib/snapd",
+            ]
+            .iter()
+            .map(PathBuf::from)
+            .collect()
+        };
+        let ctx = self.ctx.clone();
+        self.device_index = Some((
+            Instant::now(),
+            crate::fs::index::NameIndex::start(roots, skip, move || ctx.request_repaint()),
+        ));
     }
 
     /// Reads the drive list again on the next frame, e.g. after a copy
@@ -671,8 +736,11 @@ impl ExploristApp {
             Command::OpenSettings => self.view.settings_open = true,
             Command::BatchRename => self.open_batch_rename(),
             Command::NewTab => {
-                let here = self.browser.location().to_path_buf();
-                self.new_tab(here);
+                // A fresh tab starts at Home, like a new browser tab, not
+                // as a copy of this one.
+                let home =
+                    dirs::home_dir().unwrap_or_else(|| self.browser.location().to_path_buf());
+                self.new_tab(home);
             }
             Command::CloseTab => self.close_tab(self.active_tab),
             Command::NextTab => self.cycle_tab(true),

@@ -37,7 +37,7 @@ with rebindable shortcuts, and update checks.
 
 | Action | Shortcut |
 |---|---|
-| Command palette / recent places | Ctrl P / Ctrl E (`>` commands, `@` places, `/` files) |
+| Command palette / recent places | Ctrl P / Ctrl E (`>` commands, `@` places, `/` files; in file search, Ctrl E switches between this folder and everywhere) |
 | Open | Enter (or double-click) |
 | Back / Forward | Alt ← / Alt → (Backspace and the mouse's side buttons too) |
 | Up one level | Alt ↑ |

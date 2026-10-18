@@ -13,7 +13,7 @@ use crate::app::ExploristApp;
 use crate::app::commands::Command;
 use crate::app::fuzzy::fuzzy_match;
 use crate::app::keymap;
-use crate::fs::index::FileIndex;
+use crate::fs::index::NameIndex;
 use crate::fs::places::PlaceIcon;
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme::{Palette, radius, text};
@@ -27,11 +27,13 @@ pub struct PaletteState {
     pub query: String,
     pub selected: usize,
     pub just_opened: bool,
-    index: Option<FileIndex>,
-    /// Results for `cached_query` with `cached_items` files indexed.
+    /// Everything in the open folder, for "This folder" searches.
+    index: Option<NameIndex>,
+    /// Results for a query, scope and index state, to skip searching again
+    /// every frame.
     cache: Vec<Item>,
-    cached_query: Option<String>,
-    cached_items: usize,
+    cached_key: Option<(String, bool, u64)>,
+    searched_at: Option<std::time::Instant>,
 }
 
 impl PaletteState {
@@ -42,8 +44,8 @@ impl PaletteState {
             just_opened: true,
             index: None,
             cache: Vec::new(),
-            cached_query: None,
-            cached_items: 0,
+            cached_key: None,
+            searched_at: None,
         }
     }
 }
@@ -111,21 +113,53 @@ fn results(app: &mut ExploristApp) -> Vec<Item> {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| app.browser.location().display().to_string());
 
-    // Start indexing files the first time they're needed.
-    if matches!(mode, Mode::All | Mode::Files)
+    // Start listing files the first time they're needed: the open folder,
+    // or the whole device.
+    let everywhere = app.settings.search_everywhere;
+    let wants_files = matches!(mode, Mode::All | Mode::Files);
+    if wants_files && everywhere {
+        app.ensure_device_index();
+    }
+    let Some(state) = &mut app.view.palette else {
+        return Vec::new();
+    };
+    if wants_files
+        && !everywhere
         && state
             .index
             .as_ref()
-            .is_none_or(|i| i.root() != app.browser.location())
+            .is_none_or(|i| i.roots() != [app.browser.location().to_path_buf()])
     {
         let ctx = app.ctx.clone();
-        state.index = Some(FileIndex::start(app.browser.location(), move || {
-            ctx.request_repaint()
-        }));
+        state.index = Some(NameIndex::start(
+            vec![app.browser.location().to_path_buf()],
+            Vec::new(),
+            move || ctx.request_repaint(),
+        ));
     }
-    let indexed = state.index.as_mut().map_or(0, |i| i.items().len());
-    if state.cached_query.as_deref() == Some(state.query.as_str()) && state.cached_items == indexed
+    let index: Option<&NameIndex> = if everywhere {
+        app.device_index.as_ref().map(|(_, i)| i)
+    } else {
+        state.index.as_ref()
+    };
+    let generation = index.map_or(0, NameIndex::generation);
+    let key = (state.query.clone(), everywhere, generation);
+    if state.cached_key.as_ref() == Some(&key) {
+        return state.cache.clone();
+    }
+    // While the list is still growing, search again at most a few times a
+    // second; a new query always searches right away.
+    let same_query = state
+        .cached_key
+        .as_ref()
+        .is_some_and(|(q, e, _)| *q == key.0 && *e == key.1);
+    if same_query
+        && state
+            .searched_at
+            .is_some_and(|t| t.elapsed().as_millis() < 250)
     {
+        app.ctx
+            .request_repaint_after(std::time::Duration::from_millis(250));
         return state.cache.clone();
     }
 
@@ -226,48 +260,70 @@ fn results(app: &mut ExploristApp) -> Vec<Item> {
         out.extend(found);
     }
 
-    if matches!(mode, Mode::All | Mode::Files) && (!query.is_empty() || mode == Mode::Files) {
-        let group = format!("Files in {folder_name}");
-        let items = state
-            .index
-            .as_mut()
-            .map(|i| i.items().to_vec())
-            .unwrap_or_default();
-        let mut found: Vec<Item> = items
-            .into_iter()
-            .filter_map(|f| {
-                let m = fuzzy_match(&query, &f.relative)?;
-                Some(Item {
-                    group: group.clone(),
-                    hint: if f.is_dir {
-                        "Folder".to_owned()
-                    } else {
-                        String::new()
-                    },
-                    mono: true,
-                    icon: if f.is_dir { Icon::Folder } else { Icon::File },
-                    icon_accent: f.is_dir,
-                    keys: None,
-                    // Depth costs a little, so nearby matches come first.
-                    score: m.score - f.relative.matches('/').count() as i32,
-                    indices: m.indices,
-                    label: f.relative,
-                    target: if f.is_dir {
-                        Target::Folder(f.path)
-                    } else {
-                        Target::File(f.path)
-                    },
-                })
-            })
-            .collect();
-        found.sort_by_key(|item| std::cmp::Reverse(item.score));
-        found.truncate(limit(Mode::Files, 8));
-        out.extend(found);
+    if wants_files && !query.is_empty() {
+        let listing = index.is_some_and(|i| !i.is_done());
+        let mut group = if everywhere {
+            "Files on this device".to_owned()
+        } else {
+            format!("Files in {folder_name}")
+        };
+        if listing && let Some(index) = index {
+            group.push_str(&format!(
+                " · listing, {} so far",
+                crate::fs::format::count(index.len() as u64)
+            ));
+        }
+        let hits = index.map_or_else(Vec::new, |i| i.search(&query, limit(Mode::Files, 8)));
+        out.extend(hits.into_iter().map(|hit| {
+            // The name leads; where it is follows, dimmed: the folder below
+            // the open one, or the full folder path when searching
+            // everywhere.
+            let label = hit.path.file_name().map_or_else(
+                || hit.path.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            let hint = if everywhere {
+                hit.path
+                    .parent()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default()
+            } else {
+                hit.relative
+                    .trim_end_matches('/')
+                    .rsplit_once('/')
+                    .map(|(dir, _)| dir.to_owned())
+                    .unwrap_or_default()
+            };
+            let offset = 0;
+            Item {
+                group: group.clone(),
+                hint,
+                mono: true,
+                icon: if hit.is_dir { Icon::Folder } else { Icon::File },
+                icon_accent: hit.is_dir,
+                keys: None,
+                score: hit.score,
+                indices: hit
+                    .matches
+                    .iter()
+                    .flat_map(|&(a, b)| a + offset..b + offset)
+                    .collect(),
+                label,
+                target: if hit.is_dir {
+                    Target::Folder(hit.path)
+                } else {
+                    Target::File(hit.path)
+                },
+            }
+        }));
     }
 
+    let Some(state) = &mut app.view.palette else {
+        return out;
+    };
     state.cache = out.clone();
-    state.cached_query = Some(state.query.clone());
-    state.cached_items = indexed;
+    state.cached_key = Some(key);
+    state.searched_at = Some(std::time::Instant::now());
     out
 }
 
@@ -302,15 +358,18 @@ pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
     let items = results(app);
 
     // Keys the list handles before the text field sees them.
-    let (up, down, enter, escape, tab) = ctx.input_mut(|i| {
+    let (up, down, enter, escape, tab, scope_key) = ctx.input_mut(|i| {
         (
             i.consume_key(Modifiers::NONE, Key::ArrowUp),
             i.consume_key(Modifiers::NONE, Key::ArrowDown),
             i.consume_key(Modifiers::NONE, Key::Enter),
             i.consume_key(Modifiers::NONE, Key::Escape),
             i.consume_key(Modifiers::NONE, Key::Tab),
+            i.consume_key(Modifiers::COMMAND, Key::E),
         )
     });
+    let everywhere = app.settings.search_everywhere;
+    let mut switch_scope = scope_key;
     let Some(state) = &mut app.view.palette else {
         return;
     };
@@ -408,6 +467,45 @@ pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
                         text::caption(),
                         p.muted,
                     );
+                    // Where files are searched: this folder or everywhere.
+                    let mut count_rect = count_rect;
+                    if matches!(mode, Mode::All | Mode::Files) {
+                        let mut right = count_rect.left() - 12.0;
+                        for (label, on) in
+                            [("Everywhere", everywhere), ("This folder", !everywhere)]
+                        {
+                            let g = ui.painter().layout_no_wrap(
+                                label.to_owned(),
+                                crate::ui::fonts::medium(11.5),
+                                if on { p.accent } else { p.text_2 },
+                            );
+                            let pill = Rect::from_min_max(
+                                Pos2::new(right - g.size().x - 16.0, row.center().y - 11.0),
+                                Pos2::new(right, row.center().y + 11.0),
+                            );
+                            let response = ui
+                                .interact(pill, ui.id().with(("scope", label)), Sense::click())
+                                .on_hover_text("Where to search for files (Ctrl E)");
+                            let fill = if on {
+                                p.accent_alpha(0.14)
+                            } else if response.hovered() {
+                                p.hover
+                            } else {
+                                Color32::TRANSPARENT
+                            };
+                            ui.painter().rect_filled(pill, CornerRadius::same(5), fill);
+                            ui.painter().galley(
+                                Pos2::new(pill.left() + 8.0, pill.center().y - g.size().y / 2.0),
+                                g,
+                                p.text_2,
+                            );
+                            if response.clicked() && !on {
+                                switch_scope = true;
+                            }
+                            right = pill.left() - 4.0;
+                        }
+                        count_rect.min.x = right + 4.0;
+                    }
 
                     // The field edits the text after the prefix.
                     let mut typed = query_text.clone();
@@ -472,30 +570,34 @@ pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
                                 p.muted,
                             );
                         }
-                        let mut group = String::new();
-                        for (i, item) in items
-                            .iter()
-                            .enumerate()
-                            .take(MAX_ROWS.max(items.len()).min(30))
-                        {
-                            if item.group != group {
-                                group = item.group.clone();
-                                let (r, _) = ui.allocate_exact_size(
-                                    vec2(WIDTH - 12.0, if i == 0 { 26.0 } else { 30.0 }),
-                                    Sense::hover(),
-                                );
-                                ui.painter().text(
-                                    Pos2::new(r.left() + 10.0, r.bottom() - 9.0),
-                                    Align2::LEFT_CENTER,
-                                    &group,
-                                    crate::ui::fonts::medium(11.5),
-                                    p.text_2,
-                                );
-                            }
-                            if row_ui(ui, &p, item, i == state.selected) {
-                                chosen = Some(item.clone());
-                            }
-                        }
+                        let max_height =
+                            (screen.height() - 108.0 - 52.0 - 36.0 - 60.0).clamp(160.0, 460.0);
+                        egui::ScrollArea::vertical()
+                            .id_salt("palette-results")
+                            .max_height(max_height)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                let mut group = String::new();
+                                for (i, item) in items.iter().enumerate() {
+                                    if item.group != group {
+                                        group = item.group.clone();
+                                        let (r, _) = ui.allocate_exact_size(
+                                            vec2(WIDTH - 12.0, if i == 0 { 26.0 } else { 30.0 }),
+                                            Sense::hover(),
+                                        );
+                                        ui.painter().text(
+                                            Pos2::new(r.left() + 10.0, r.bottom() - 9.0),
+                                            Align2::LEFT_CENTER,
+                                            &group,
+                                            crate::ui::fonts::medium(11.5),
+                                            p.text_2,
+                                        );
+                                    }
+                                    if row_ui(ui, &p, item, i == state.selected) {
+                                        chosen = Some(item.clone());
+                                    }
+                                }
+                            });
                     });
 
                     // Footer.
@@ -538,6 +640,14 @@ pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
                     );
                 });
         });
+    if switch_scope {
+        app.settings.search_everywhere = !app.settings.search_everywhere;
+        app.save_settings();
+        if let Some(state) = &mut app.view.palette {
+            state.selected = 0;
+        }
+        return;
+    }
     // A click outside closes it.
     let clicked_outside = ctx.input(|i| {
         i.pointer.any_pressed()
@@ -621,13 +731,17 @@ fn row_ui(ui: &mut egui::Ui, p: &Palette, item: &Item, selected: bool) -> bool {
         right -= w + 12.0;
     }
     if !item.hint.is_empty() {
-        let g = widgets::truncated(
-            ui,
-            &item.hint,
-            crate::ui::fonts::regular(12.0),
-            p.muted,
-            220.0,
-        );
+        let font = if item.mono {
+            crate::ui::fonts::mono(11.5)
+        } else {
+            crate::ui::fonts::regular(12.0)
+        };
+        // Folder paths lose their start, not their end, when too long.
+        let g = if item.mono {
+            tail_truncated(ui, &item.hint, font, p.muted, 300.0)
+        } else {
+            widgets::truncated(ui, &item.hint, font, p.muted, 220.0)
+        };
         let w = g.size().x;
         ui.painter().galley(
             Pos2::new(right - w, rect.center().y - g.size().y / 2.0),
@@ -686,4 +800,39 @@ fn row_ui(ui: &mut egui::Ui, p: &Palette, item: &Item, selected: bool) -> bool {
         Color32::PLACEHOLDER,
     );
     response.clicked()
+}
+
+/// `text` in `font`, shortened from the start with "…" to fit `max_width`:
+/// "…/photos/2024" rather than "/home/rick/pho…".
+fn tail_truncated(
+    ui: &egui::Ui,
+    text: &str,
+    font: egui::FontId,
+    color: Color32,
+    max_width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let layout = |s: String| ui.painter().layout_no_wrap(s, font.clone(), color);
+    let full = layout(text.to_owned());
+    if full.size().x <= max_width {
+        return full;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    // Drop as few leading characters as needed.
+    let (mut lo, mut hi) = (1, chars.len());
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let candidate: String = std::iter::once('…')
+            .chain(chars[mid..].iter().copied())
+            .collect();
+        if layout(candidate).size().x <= max_width {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    layout(
+        std::iter::once('…')
+            .chain(chars[lo..].iter().copied())
+            .collect(),
+    )
 }

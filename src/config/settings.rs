@@ -43,6 +43,9 @@ pub struct Settings {
     pub grid_view: bool,
     /// Work out folder sizes for the Size column.
     pub folder_sizes: bool,
+    /// File search looks everywhere on the device, not just in the open
+    /// folder.
+    pub search_everywhere: bool,
     /// Folders open in tabs when Explorist closed, and which was active.
     pub open_tabs: Vec<PathBuf>,
     pub active_tab: usize,
@@ -83,6 +86,7 @@ impl Default for Settings {
             show_preview: true,
             grid_view: false,
             folder_sizes: false,
+            search_everywhere: false,
             open_tabs: Vec::new(),
             active_tab: 0,
             git_status: true,
@@ -287,6 +291,7 @@ mod tests {
             show_preview: false,
             grid_view: true,
             folder_sizes: true,
+            search_everywhere: true,
             open_tabs: vec![PathBuf::from("C:\\Users"), PathBuf::from("D:\\photos")],
             active_tab: 1,
             git_status: false,
