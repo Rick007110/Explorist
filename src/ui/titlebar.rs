@@ -56,10 +56,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
             let mut action = None;
             for i in 0..count {
                 let location = app.tab_location(i);
-                let name = location
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| location.display().to_string());
+                let start = app.tab_is_start(i);
+                let name = if start {
+                    "New tab".to_owned()
+                } else {
+                    location
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| location.display().to_string())
+                };
                 let active = i == app.active_tab && !settings_open;
                 let style = TabStyle {
                     active,
@@ -67,8 +72,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                     busy: app.tab_busy(i),
                     max_width,
                 };
-                let (rect, response) =
-                    tab(ui, &p, x, &name, Icon::Folder, style, ("folder-tab", i));
+                let (rect, response) = tab(
+                    ui,
+                    &p,
+                    x,
+                    &name,
+                    if start { Icon::Home } else { Icon::Folder },
+                    style,
+                    ("folder-tab", i),
+                );
                 x = rect.right() + 2.0;
                 if response.closed {
                     action = Some((i, true));
@@ -113,8 +125,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 },
             );
             if plus_response.clicked() {
-                let here = app.browser.location().to_path_buf();
-                app.new_tab(here);
+                app.new_start_tab();
             }
             match action {
                 Some((i, true)) => app.close_tab(i),

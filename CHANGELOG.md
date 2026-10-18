@@ -4,6 +4,14 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
+## 0.3.2
+
+### Changed
+- **New tabs open a start page** with your favorite places, drives (with free space) and recent folders, instead of a copy of a folder that's already open. Pick one to open it in that tab.
+
+### Fixed
+- The + button in the tab bar still opened a copy of the current folder.
+
 ## 0.3.1
 
 ### New

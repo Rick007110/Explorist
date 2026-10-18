@@ -55,6 +55,9 @@ pub struct Browser {
     last_change: Option<Instant>,
     /// Bumped whenever the entries change, so others can tell.
     generation: u64,
+    /// A new tab shows the start page (places and drives) until it goes
+    /// somewhere.
+    pub start_page: bool,
 }
 
 impl Browser {
@@ -78,6 +81,7 @@ impl Browser {
             pending: Changes::default(),
             last_change: None,
             generation: 0,
+            start_page: false,
         };
         browser.load(location);
         browser
@@ -153,6 +157,7 @@ impl Browser {
 
     /// Opens a folder, adding the current one to Back history.
     pub fn navigate(&mut self, path: PathBuf) {
+        self.start_page = false;
         if path == self.location {
             return self.refresh();
         }
@@ -162,6 +167,7 @@ impl Browser {
     }
 
     pub fn go_back(&mut self) {
+        self.start_page = false;
         if let Some(path) = self.back.pop() {
             self.forward.push(std::mem::take(&mut self.location));
             self.load(path);
@@ -169,6 +175,7 @@ impl Browser {
     }
 
     pub fn go_forward(&mut self) {
+        self.start_page = false;
         if let Some(path) = self.forward.pop() {
             self.back.push(std::mem::take(&mut self.location));
             self.load(path);

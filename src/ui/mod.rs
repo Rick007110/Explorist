@@ -16,6 +16,7 @@ pub mod properties;
 pub mod quick_look;
 pub mod settings;
 pub mod sidebar;
+pub mod start_page;
 pub mod status_bar;
 pub mod theme;
 pub mod titlebar;

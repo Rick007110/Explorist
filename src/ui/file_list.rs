@@ -37,6 +37,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
         .frame(Frame::NONE.fill(p.bg_2))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+            if app.browser.start_page {
+                crate::ui::start_page::show(ui, app);
+                return;
+            }
             if app.view.filter_open {
                 filter_bar(ui, app);
             }

@@ -516,7 +516,9 @@ impl ExploristApp {
             self.record_shortcut(ctx, command);
             return;
         }
-        let typing = Self::typing(ctx);
+        // The start page has no list, so list keys (Enter, arrows, typing
+        // to jump) do nothing there; shortcuts with Ctrl or Alt still work.
+        let typing = Self::typing(ctx) || self.browser.start_page;
         let (events, mods) = ctx.input(|i| (i.events.clone(), Mods::from_egui(i.modifiers)));
         let mut consumed = Vec::new();
         for (index, event) in events.iter().enumerate() {
@@ -675,7 +677,11 @@ impl ExploristApp {
             }
             Command::EditPath => {
                 self.view.path_edit = Some(PathEdit {
-                    text: self.browser.location().display().to_string(),
+                    text: if self.browser.start_page {
+                        String::new()
+                    } else {
+                        self.browser.location().display().to_string()
+                    },
                     just_opened: true,
                     ..PathEdit::default()
                 });
@@ -735,13 +741,8 @@ impl ExploristApp {
             Command::ToggleFocused => self.browser.select(|sel, rows| sel.toggle_focused(rows)),
             Command::OpenSettings => self.view.settings_open = true,
             Command::BatchRename => self.open_batch_rename(),
-            Command::NewTab => {
-                // A fresh tab starts at Home, like a new browser tab, not
-                // as a copy of this one.
-                let home =
-                    dirs::home_dir().unwrap_or_else(|| self.browser.location().to_path_buf());
-                self.new_tab(home);
-            }
+            // A fresh tab shows the start page, not a copy of this one.
+            Command::NewTab => self.new_start_tab(),
             Command::CloseTab => self.close_tab(self.active_tab),
             Command::NextTab => self.cycle_tab(true),
             Command::PreviousTab => self.cycle_tab(false),

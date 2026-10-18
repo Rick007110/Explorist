@@ -184,19 +184,34 @@ fn path_bar(ui: &mut egui::Ui, app: &mut ExploristApp, width: f32) {
     } else {
         rect.right() - 6.0
     };
-    let clicked_crumb = breadcrumbs(
-        ui,
-        &p,
-        app.browser.location(),
-        crumbs_left,
-        crumbs_right,
-        rect.center().y,
-    );
+    let clicked_crumb = if app.browser.start_page {
+        ui.painter().text(
+            Pos2::new(crumbs_left, rect.center().y),
+            Align2::LEFT_CENTER,
+            "New tab",
+            text::body(),
+            p.muted,
+        );
+        None
+    } else {
+        breadcrumbs(
+            ui,
+            &p,
+            app.browser.location(),
+            crumbs_left,
+            crumbs_right,
+            rect.center().y,
+        )
+    };
     if let Some(path) = clicked_crumb {
         app.browser.navigate(path);
     } else if response.clicked() {
         app.view.path_edit = Some(PathEdit {
-            text: app.browser.location().display().to_string(),
+            text: if app.browser.start_page {
+                String::new()
+            } else {
+                app.browser.location().display().to_string()
+            },
             just_opened: true,
             ..PathEdit::default()
         });

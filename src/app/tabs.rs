@@ -38,6 +38,23 @@ impl ExploristApp {
         }
     }
 
+    /// A new, empty tab: the start page, with places and drives to pick
+    /// from. Underneath it's at Home, which is where Up and typing a path
+    /// start from.
+    pub(crate) fn new_start_tab(&mut self) {
+        let home = dirs::home_dir().unwrap_or_else(|| self.browser.location().to_path_buf());
+        self.new_tab(home);
+        self.browser.start_page = true;
+    }
+
+    /// Whether tab `i` shows the start page.
+    pub(crate) fn tab_is_start(&self, i: usize) -> bool {
+        match self.tabs.get(i) {
+            Some(Some(slot)) => slot.browser.start_page,
+            _ => self.browser.start_page,
+        }
+    }
+
     /// Opens `path` in a new tab after the active one and switches to it.
     pub(crate) fn new_tab(&mut self, path: PathBuf) {
         let ctx = self.ctx.clone();

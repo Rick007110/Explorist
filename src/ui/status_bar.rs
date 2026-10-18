@@ -26,6 +26,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 job_status(ui, &p, running, rect);
                 return;
             }
+            if app.browser.start_page {
+                return;
+            }
             let painter = ui.painter();
             let font = crate::ui::fonts::mono(11.5);
             let y = rect.center().y;

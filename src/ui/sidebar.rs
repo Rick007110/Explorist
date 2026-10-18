@@ -45,7 +45,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 .chain(drives.iter().map(|d| &d.root))
                 .filter(|path| location.starts_with(path))
                 .max_by_key(|path| path.components().count())
-                .cloned();
+                .cloned()
+                // The start page isn't any place yet.
+                .filter(|_| !app.browser.start_page);
 
             widgets::section_label(ui, &p, "Favorites");
             let places = app.places.clone();
