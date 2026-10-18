@@ -918,6 +918,11 @@ impl ExploristApp {
         let Some(edit) = &mut self.view.path_edit else {
             return;
         };
+        // Nothing typed: just close the field.
+        if edit.text.trim().is_empty() {
+            self.view.path_edit = None;
+            return;
+        }
         match path_input::resolve(&edit.text, self.browser.location()) {
             Ok(Target::Folder(path)) => {
                 self.view.path_edit = None;

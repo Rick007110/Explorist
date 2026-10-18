@@ -369,6 +369,7 @@ pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
         )
     });
     let everywhere = app.settings.search_everywhere;
+    let device_listing = app.device_index.as_ref().is_some_and(|(_, i)| !i.is_done());
     let mut switch_scope = scope_key;
     let Some(state) = &mut app.view.palette else {
         return;
@@ -555,8 +556,15 @@ pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
                         ui.set_width(WIDTH - 12.0);
                         ui.spacing_mut().item_spacing.y = 1.0;
                         if items.is_empty() {
-                            let message = if state.index.as_ref().is_some_and(|i| !i.is_done()) {
+                            let listing = if everywhere {
+                                device_listing
+                            } else {
+                                state.index.as_ref().is_some_and(|i| !i.is_done())
+                            };
+                            let message = if listing {
                                 "Searching…"
+                            } else if matches!(mode, Mode::Files) && query_text.trim().is_empty() {
+                                "Type a file or folder name"
                             } else {
                                 "No matches"
                             };

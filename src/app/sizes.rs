@@ -55,7 +55,8 @@ impl ExploristApp {
             return;
         }
         sizes.active = true;
-        if !matches!(self.browser.load_state(), LoadState::Ready { .. }) {
+        if self.browser.start_page || !matches!(self.browser.load_state(), LoadState::Ready { .. })
+        {
             return;
         }
 

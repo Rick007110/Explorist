@@ -167,16 +167,16 @@ impl Browser {
     }
 
     pub fn go_back(&mut self) {
-        self.start_page = false;
         if let Some(path) = self.back.pop() {
+            self.start_page = false;
             self.forward.push(std::mem::take(&mut self.location));
             self.load(path);
         }
     }
 
     pub fn go_forward(&mut self) {
-        self.start_page = false;
         if let Some(path) = self.forward.pop() {
+            self.start_page = false;
             self.back.push(std::mem::take(&mut self.location));
             self.load(path);
         }

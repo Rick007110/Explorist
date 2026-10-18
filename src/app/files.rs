@@ -116,6 +116,12 @@ impl ExploristApp {
         if paths.is_empty() {
             return;
         }
+        // The move runs as a job; with one already running it would be
+        // refused, leaving an empty folder behind.
+        if self.job.is_some() {
+            self.toast("Wait for the current operation to finish".to_owned(), false);
+            return;
+        }
         let here = self.browser.location().to_path_buf();
         let name = crate::fs::ops::unique_name(&here, "New folder with items", "");
         match crate::fs::ops::create_folder(&here, &name) {
@@ -338,6 +344,16 @@ impl ExploristApp {
             )
         });
         self.view.drop_hover = hovering;
+        // A new tab's start page isn't a folder to drop into.
+        if self.browser.start_page {
+            if !dropped.is_empty() {
+                self.toast(
+                    "Open a folder first, then drop files into it".to_owned(),
+                    false,
+                );
+            }
+            return;
+        }
         let dest = self.browser.location().to_path_buf();
         // Dropping files where they already are (say, dragged out and
         // back in) does nothing, as in Explorer.

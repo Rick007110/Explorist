@@ -11,6 +11,11 @@ shows the first points.
 
 ### Fixed
 - The + button in the tab bar still opened a copy of the current folder.
+- Back or Forward on a fresh tab hid the start page even though there was nowhere to go.
+- Pressing Enter in an empty path bar opened an empty search; it now just closes the field.
+- Files dropped onto a new tab's start page were copied into your Home folder.
+- "New folder with selection" while a copy was running left an empty folder behind.
+- File search said "No matches" while searching everywhere was still listing files.
 
 ## 0.3.1
 

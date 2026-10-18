@@ -74,7 +74,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 }
             }
         });
-    if app.view.drop_hover {
+    if app.view.drop_hover && !app.browser.start_page {
         drop_overlay(ui, &p, app.browser.location());
     }
     let ctx = ui.ctx().clone();
