@@ -10,6 +10,8 @@ fn main() -> eframe::Result {
             return Ok(());
         }
         Some("--update-now") => std::process::exit(explorist::update::update_now()),
+        // Opened again while it sits in the tray: show that window instead.
+        None if explorist::app::instance::hand_off() => return Ok(()),
         _ => {}
     }
     let viewport = egui::ViewportBuilder::default()

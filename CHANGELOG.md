@@ -9,6 +9,10 @@ shows the first points.
 ### New
 - **Folder icons**: right-click a folder and choose **Change icon…** to give it one of 60 icons (music, photos, code, games, work, star and more) in your accent color or one of ten others, or **Use an image…** to pick any picture of your own (PNG, JPG, ICO, SVG, WebP, BMP or GIF). Icon files (.ico) work too, including ones that hold several sizes; the biggest is used. Explorist keeps its own copy of the picture, so the icon stays if the original is moved or deleted. Icons show in the list, the grid, pinned folders in the sidebar and the start page. Works on several folders at once; **Reset to plain folder** undoes it. Icons stay with folders you rename or move in Explorist.
 - **Other apps in the right-click menu**: WinRAR (add to archive, extract here, extract to a folder), 7-Zip (the same), Sublime Text, Notepad++ and VS Code show up in the menu when they're installed. Turn each one on or off in Settings → Integrations, and add any other program there yourself, with its own arguments and whether it's for files, folders or archives.
+- **Close to tray** (Settings → General, on by default): closing the window keeps Explorist running in the notification area (the menu bar on macOS), so it opens again instantly. Click the icon to bring the window back, or right-click it and choose **Quit Explorist**. Opening Explorist again from the Start menu, Dock or launcher also brings back the hidden window instead of starting a second copy. Turn it off to have closing quit as before. On Linux this needs a desktop with a tray area; where there's none (stock GNOME), closing quits and Settings says so.
+
+### Changed
+- **Thumbnails load instantly**: image thumbnails in the grid are now saved on disk, so a folder you've opened before shows them at once, even after restarting Explorist. Changed images get a new thumbnail by themselves. The saved thumbnails take little space (about 30 KB each), the oldest are cleared past 500 MB, and Settings → Advanced shows the space used with a **Clear** button. Thumbnails also stay in memory when you move between folders, so going back is instant.
 
 ## 0.3.2
 

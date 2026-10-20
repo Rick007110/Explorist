@@ -29,7 +29,7 @@ const SIDE: f32 = 8.0;
 /// Forget all thumbnails past this many, rather than track their age.
 const CACHE_LIMIT: usize = 800;
 
-/// Thumbnails made so far, as textures, for the folder on screen.
+/// Thumbnails made so far, as textures.
 #[derive(Default)]
 pub struct ThumbCache {
     worker: Option<Thumbnailer>,
@@ -43,13 +43,17 @@ pub struct ThumbCache {
 impl ThumbCache {
     /// Takes in finished thumbnails, and starts over in a new folder.
     fn update(&mut self, ctx: &egui::Context, folder: &Path) {
-        if self.folder != folder || self.textures.len() > CACHE_LIMIT {
+        // Thumbnails stay in memory across folders, so going back is
+        // instant; the queue is only for the folder on screen.
+        if self.folder != folder {
             self.folder = folder.to_path_buf();
-            self.textures.clear();
             self.requested.clear();
             if let Some(worker) = &mut self.worker {
                 worker.clear_queue();
             }
+        }
+        if self.textures.len() > CACHE_LIMIT {
+            self.textures.clear();
         }
         let Some(worker) = &mut self.worker else {
             return;
@@ -79,7 +83,9 @@ impl ThumbCache {
         if !fresh && self.requested.get(&entry.path) != Some(&entry.modified) {
             let worker = self.worker.get_or_insert_with(|| {
                 let ctx = ctx.clone();
-                Thumbnailer::new(move || ctx.request_repaint())
+                let cache = crate::fs::thumbs::DiskCache::default_dir()
+                    .map(crate::fs::thumbs::DiskCache::new);
+                Thumbnailer::new(cache, move || ctx.request_repaint())
             });
             worker.request(&entry.path);
             self.requested.insert(entry.path.clone(), entry.modified);

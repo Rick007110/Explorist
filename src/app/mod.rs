@@ -5,11 +5,13 @@ pub mod commands;
 pub mod drag;
 pub mod files;
 pub mod fuzzy;
+pub mod instance;
 pub mod integrations;
 pub mod keymap;
 pub mod selection;
 pub mod sizes;
 pub mod tabs;
+pub mod tray;
 pub mod undo;
 
 use std::path::{Path, PathBuf};
@@ -73,6 +75,14 @@ pub struct ExploristApp {
     pub(crate) device_index: Option<(Instant, crate::fs::index::NameIndex)>,
     /// Other apps for the right-click menu.
     pub(crate) integrations: integrations::Integrations,
+    /// Listens for Explorist being opened again, if this is the first copy.
+    instance: Option<instance::Listener>,
+    /// The tray icon, while Close to tray is on (first copy only).
+    tray: Option<tray::Tray>,
+    /// The desktop has no tray area (some Linux desktops).
+    pub(crate) tray_unavailable: bool,
+    /// Closing really quits now (Quit in the tray menu, restarting to update).
+    pub(crate) quitting: bool,
 }
 
 /// A background task's outcome, for a toast.
@@ -246,6 +256,10 @@ impl ExploristApp {
             folder_sizes: Default::default(),
             device_index: None,
             integrations: integrations::Integrations::detect(),
+            instance: instance::Listener::start(cc.egui_ctx.clone()),
+            tray: None,
+            tray_unavailable: false,
+            quitting: false,
         };
         // Reopen the other tabs from last time.
         if app.settings.start_in == StartIn::LastFolder && std::env::args_os().nth(1).is_none() {
@@ -1110,6 +1124,7 @@ impl eframe::App for ExploristApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.update_tray(&ctx);
         let palette = self.current_palette(&ctx);
         if palette != self.palette || ctx.cumulative_frame_nr() == 0 {
             self.palette = palette;
@@ -1175,6 +1190,51 @@ impl eframe::App for ExploristApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.save_settings();
+    }
+}
+
+impl ExploristApp {
+    /// Close to tray: keeps the icon in step with the setting, hides the
+    /// window instead of closing it, and handles the icon's clicks.
+    fn update_tray(&mut self, ctx: &egui::Context) {
+        let wanted = self.settings.close_to_tray && self.instance.is_some();
+        if wanted && self.tray.is_none() && !self.tray_unavailable {
+            self.tray = tray::Tray::new(ctx);
+            self.tray_unavailable = self.tray.is_none();
+        } else if !wanted {
+            self.tray = None;
+        }
+        if let Some(listener) = &self.instance {
+            listener.set_accepting(self.tray.is_some());
+        }
+
+        let clicked = self.tray.as_ref().is_some_and(tray::Tray::take_show);
+        let reopened = self
+            .instance
+            .as_ref()
+            .is_some_and(instance::Listener::take_show);
+        if clicked || reopened {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            tray::set_dock_icon(true);
+        }
+        if self.tray.as_ref().is_some_and(tray::Tray::take_quit) {
+            self.quit(ctx);
+        }
+        if ctx.input(|i| i.viewport().close_requested()) && self.tray.is_some() && !self.quitting {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            tray::set_dock_icon(false);
+            // Saved as if closing, in case it's never opened again.
+            self.save_settings();
+        }
+    }
+
+    /// Closes the window for real, even with Close to tray on.
+    pub(crate) fn quit(&mut self, ctx: &egui::Context) {
+        self.quitting = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 }
 

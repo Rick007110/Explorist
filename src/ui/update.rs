@@ -301,7 +301,7 @@ pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
             app.save_settings();
         }
         Some(Action::Restart) => match update::restart() {
-            Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Ok(()) => app.quit(ctx),
             Err(err) => app.toast_error(format!(
                 "Couldn’t restart: {err}. Close and reopen Explorist."
             )),

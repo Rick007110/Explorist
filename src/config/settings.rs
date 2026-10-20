@@ -53,6 +53,8 @@ pub struct Settings {
     pub integrations_off: BTreeSet<String>,
     /// Programs added in Settings → Integrations.
     pub custom_apps: Vec<CustomApp>,
+    /// Closing the window keeps Explorist running in the tray.
+    pub close_to_tray: bool,
     /// Folders open in tabs when Explorist closed, and which was active.
     pub open_tabs: Vec<PathBuf>,
     pub active_tab: usize,
@@ -105,6 +107,7 @@ impl Default for Settings {
             folder_icons: BTreeMap::new(),
             integrations_off: BTreeSet::new(),
             custom_apps: Vec::new(),
+            close_to_tray: true,
             open_tabs: Vec::new(),
             active_tab: 0,
             git_status: true,
@@ -383,6 +386,7 @@ mod tests {
                 args: "--new \"{file}\"".to_owned(),
                 applies: crate::fs::integrations::Applies::Files,
             }],
+            close_to_tray: false,
             open_tabs: vec![PathBuf::from("C:\\Users"), PathBuf::from("D:\\photos")],
             active_tab: 1,
             git_status: false,

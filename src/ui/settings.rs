@@ -12,6 +12,7 @@ use crate::config::{Accent, Density, Settings, StartIn, Theme};
 use crate::fs::format::{self, DateFormat};
 use crate::fs::places;
 use crate::fs::sort::{SortColumn, SortDirection};
+use crate::fs::thumbs::DiskCache;
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme::{self, Palette, radius, text};
 use crate::ui::widgets::{self, ButtonStyle};
@@ -63,6 +64,8 @@ pub struct SettingsState {
     pub recording: Option<Command>,
     /// "Reset all settings" was clicked once; a second click confirms.
     pub confirm_reset: Option<std::time::Instant>,
+    /// Space taken by saved thumbnails, once counted.
+    pub thumbnails: Option<std::sync::Arc<std::sync::Mutex<Option<u64>>>>,
     /// The app being added under Integrations.
     pub new_app: crate::fs::integrations::CustomApp,
 }
@@ -300,6 +303,10 @@ fn section_rows(section: Section) -> Vec<(&'static str, &'static str)> {
             ("Show hidden files", "Hidden and system items. Also Ctrl H."),
             ("Pinned folders", "Shown under Favorites in the sidebar."),
             ("Updates", "Check for a new version once a day."),
+            (
+                "Close to tray",
+                "Closing the window keeps Explorist running in the tray (the menu bar on macOS), so it opens instantly. Quit from its icon. Off: closing quits.",
+            ),
         ],
         Section::Appearance => vec![
             (
@@ -352,6 +359,10 @@ fn section_rows(section: Section) -> Vec<(&'static str, &'static str)> {
         ],
         Section::Advanced => vec![
             ("Settings file", "Where these settings are saved."),
+            (
+                "Saved thumbnails",
+                "Image thumbnails are kept on disk so folders show them at once. The oldest go past 500 MB.",
+            ),
             ("Reset all settings", "Go back to the defaults."),
         ],
     }
@@ -479,6 +490,22 @@ fn general(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mut
                     .color(p.muted),
             );
         });
+    });
+    let unavailable = app.tray_unavailable;
+    row(ui, &query, p, rows[4].0, rows[4].1, |ui| {
+        widgets::switch(ui, p, &mut s.close_to_tray);
+        if unavailable && s.close_to_tray {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(
+                        "This desktop has no tray area, so closing quits. On GNOME, the AppIndicator extension adds one.",
+                    )
+                    .font(crate::ui::fonts::regular(12.0))
+                    .color(p.muted),
+                )
+                .wrap(),
+            );
+        }
     });
     commit(app, s, changes);
 }
@@ -1037,12 +1064,42 @@ fn advanced(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mu
             changes.close = true;
         }
     });
+    let size = app.view.settings.thumbnails.get_or_insert_with(|| {
+        // Counted in the background; there can be many files.
+        let size = std::sync::Arc::new(std::sync::Mutex::new(None));
+        if let Some(dir) = DiskCache::default_dir() {
+            let (found, ctx) = (std::sync::Arc::clone(&size), ui.ctx().clone());
+            std::thread::spawn(move || {
+                *found.lock().unwrap() = Some(DiskCache::new(dir).size());
+                ctx.request_repaint();
+            });
+        }
+        size
+    });
+    let size = *size.lock().unwrap();
+    row(ui, &query, p, rows[1].0, rows[1].1, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 12.0;
+            let clear = widgets::button(ui, p, "Clear", ButtonStyle::Secondary, None).clicked();
+            ui.label(
+                egui::RichText::new(size.map_or_else(|| "Counting…".to_owned(), format::size))
+                    .font(crate::ui::fonts::regular(12.0))
+                    .color(p.muted),
+            );
+            if clear && let Some(dir) = DiskCache::default_dir() {
+                match DiskCache::new(dir).clear() {
+                    Ok(()) => app.view.settings.thumbnails = None,
+                    Err(err) => app.toast_error(format!("Couldn’t clear thumbnails: {err}")),
+                }
+            }
+        });
+    });
     let armed = app
         .view
         .settings
         .confirm_reset
         .is_some_and(|t| t.elapsed().as_secs_f32() < 4.0);
-    row(ui, &query, p, rows[1].0, rows[1].1, |ui| {
+    row(ui, &query, p, rows[2].0, rows[2].1, |ui| {
         let label = if armed {
             "Click again to reset everything"
         } else {
