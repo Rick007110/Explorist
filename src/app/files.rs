@@ -236,6 +236,18 @@ impl ExploristApp {
         ) {
             self.carry_folder_icons(&outcome.done);
         }
+        // Deleted for good: a new folder with the same name starts plain.
+        // (Trashed folders keep theirs, for when they're put back.)
+        if matches!(running.job.work, Work::Delete(_)) && !self.settings.folder_icons.is_empty() {
+            let mut forgot = false;
+            for (path, _) in &outcome.done {
+                forgot |= self.settings.forget_folder_icons(path);
+            }
+            if forgot {
+                self.save_settings();
+                crate::ui::image_icon::prune(&self.settings);
+            }
+        }
         let here = self.browser.location().to_path_buf();
         let inside = |p: &Path| p.parent() == Some(here.as_path());
 

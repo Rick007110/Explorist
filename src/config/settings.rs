@@ -212,6 +212,27 @@ impl Settings {
         }
     }
 
+    /// Keys of `folder`'s icon and those of folders inside it.
+    fn folder_icon_keys(&self, folder: &Path) -> Vec<String> {
+        let key = folder_key(folder);
+        let inside = format!("{key}{}", std::path::MAIN_SEPARATOR);
+        self.folder_icons
+            .keys()
+            .filter(|k| **k == key || k.starts_with(&inside))
+            .cloned()
+            .collect()
+    }
+
+    /// Drops the icons of a deleted folder and the folders inside it.
+    /// Returns whether there were any.
+    pub fn forget_folder_icons(&mut self, folder: &Path) -> bool {
+        let keys = self.folder_icon_keys(folder);
+        for key in &keys {
+            self.folder_icons.remove(key);
+        }
+        !keys.is_empty()
+    }
+
     /// Keeps folder icons with their folders when they're renamed or
     /// moved: `from` (and anything inside it) becomes `to`.
     pub fn move_folder_icons(&mut self, from: &Path, to: &Path) {
@@ -220,13 +241,7 @@ impl Settings {
         }
         let from_key = folder_key(from);
         let to_key = folder_key(to);
-        let sep = std::path::MAIN_SEPARATOR;
-        let moved: Vec<String> = self
-            .folder_icons
-            .keys()
-            .filter(|k| **k == from_key || k.starts_with(&format!("{from_key}{sep}")))
-            .cloned()
-            .collect();
+        let moved = self.folder_icon_keys(from);
         for key in moved {
             if let Some(icon) = self.folder_icons.remove(&key) {
                 let new_key = format!("{to_key}{}", &key[from_key.len()..]);
@@ -470,6 +485,10 @@ mod tests {
         );
         // A different folder that merely starts with the same letters stays.
         assert_eq!(s.folder_icon(&root.join("Musicals")).unwrap().icon, "film");
+        assert!(s.forget_folder_icons(&root.join("Songs")));
+        assert!(s.folder_icon(&root.join("Songs").join("Live")).is_none());
+        assert!(s.folder_icon(&root.join("Musicals")).is_some());
+        assert!(!s.forget_folder_icons(&root.join("Songs")));
         assert!(s.folder_icon(&root.join("Music")).is_none());
         s.set_folder_icon(&root.join("Songs"), None);
         assert!(s.folder_icon(&root.join("Songs")).is_none());
