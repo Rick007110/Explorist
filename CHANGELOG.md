@@ -4,7 +4,7 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
-## Unreleased
+## 0.3.3
 
 ### New
 - **Folder icons**: right-click a folder and choose **Change icon…** to give it one of 60 icons (music, photos, code, games, work, star and more) in your accent color or one of ten others, or **Use an image…** to pick any picture of your own (PNG, JPG, ICO, SVG, WebP, BMP or GIF). Icon files (.ico) work too, including ones that hold several sizes; the biggest is used. Explorist keeps its own copy of the picture, so the icon stays if the original is moved or deleted. Icons show in the list, the grid, pinned folders in the sidebar and the start page. Works on several folders at once; **Reset to plain folder** undoes it. Icons stay with folders you rename or move in Explorist.
