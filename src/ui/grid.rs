@@ -53,7 +53,13 @@ impl ThumbCache {
             }
         }
         if self.textures.len() > CACHE_LIMIT {
-            self.textures.clear();
+            // Make room, but keep the folder on screen.
+            let here = self.folder.clone();
+            self.textures
+                .retain(|path, _| path.parent() == Some(here.as_path()));
+            if self.textures.len() > CACHE_LIMIT {
+                self.textures.clear();
+            }
         }
         let Some(worker) = &mut self.worker else {
             return;

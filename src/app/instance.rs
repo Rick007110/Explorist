@@ -20,7 +20,12 @@ fn port_file() -> Option<PathBuf> {
     Some(Settings::default_path()?.parent()?.join("instance"))
 }
 
-fn connect() -> Option<TcpStream> {
+/// Greeting each side sends first, so a port left in the file from an
+/// earlier run, now used by some other program, isn't mistaken for us.
+const HELLO: &str = "explorist-instance 1";
+
+/// Connects to the running Explorist, if there is one.
+fn connect() -> Option<BufReader<TcpStream>> {
     let port: u16 = std::fs::read_to_string(port_file()?)
         .ok()?
         .trim()
@@ -28,8 +33,13 @@ fn connect() -> Option<TcpStream> {
         .ok()?;
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let stream = TcpStream::connect_timeout(&addr, Duration::from_millis(300)).ok()?;
-    stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
-    Some(stream)
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .ok()?;
+    let mut stream = BufReader::new(stream);
+    let mut hello = String::new();
+    stream.read_line(&mut hello).ok()?;
+    (hello.trim() == HELLO).then_some(stream)
 }
 
 /// The line asking for the window. It names the version, so a copy that
@@ -44,11 +54,11 @@ pub fn hand_off() -> bool {
     let Some(mut stream) = connect() else {
         return false;
     };
-    if writeln!(stream, "{}", request()).is_err() {
+    if writeln!(stream.get_mut(), "{}", request()).is_err() {
         return false;
     }
     let mut reply = String::new();
-    BufReader::new(stream).read_line(&mut reply).is_ok() && reply.trim() == "ok"
+    stream.read_line(&mut reply).is_ok() && reply.trim() == "ok"
 }
 
 /// Listens for later copies asking for the window.
@@ -79,6 +89,9 @@ impl Listener {
             .spawn(move || {
                 for stream in listener.incoming().flatten() {
                     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                    if writeln!(&stream, "{HELLO}").is_err() {
+                        continue;
+                    }
                     let mut line = String::new();
                     if BufReader::new(&stream).read_line(&mut line).is_err() {
                         continue;
