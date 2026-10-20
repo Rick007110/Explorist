@@ -9,6 +9,10 @@ shows the first points.
 ### Changed
 - **Update checks happen more often**: Explorist looks for a new version every time it starts (unless it checked in the last 15 minutes), when you bring it back from the tray, and every 4 hours while it keeps running, instead of once a day.
 
+### Fixed
+- Long file names in the right-click menu ran past its edge. Menus with archive names now widen to fit, and anything still too long is shortened with "…" and shown in full when you point at it.
+- "Extract to" for .7z, .rar and other archive types (WinRAR, 7-Zip) named the folder with the archive's ending still on, like "photos.7z".
+
 ## 0.3.3
 
 ### New

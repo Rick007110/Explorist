@@ -725,8 +725,12 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
                         let row = menu::submenu_item(ui, &p, name);
                         egui::containers::menu::SubMenu::new().show(ui, &row, |ui| {
                             menu::style(ui);
+                            // Wide enough for archive names, up to a point.
+                            let labels: Vec<&str> =
+                                group.iter().map(|a| a.label.as_str()).collect();
+                            let width = menu::width_for(ui, &labels);
                             for action in group {
-                                if menu::plain_item(ui, &p, &action.label) {
+                                if menu::plain_item_sized(ui, &p, &action.label, width) {
                                     chosen = Some(action);
                                 }
                             }

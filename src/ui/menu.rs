@@ -67,7 +67,30 @@ pub fn item_labeled(
 
 /// A menu row with no command or shortcut behind it.
 pub fn plain_item(ui: &mut egui::Ui, p: &Palette, label: &str) -> bool {
-    let (rect, response) = ui.allocate_exact_size(vec2(MENU_WIDTH - 8.0, 30.0), Sense::click());
+    plain_item_sized(ui, p, label, MENU_WIDTH - 8.0)
+}
+
+/// Widest a submenu grows to fit long names, before they're shortened.
+pub const MAX_SUBMENU_WIDTH: f32 = 420.0;
+
+/// The row width that fits all of `labels`, within the menu's limits.
+pub fn width_for(ui: &egui::Ui, labels: &[&str]) -> f32 {
+    let widest = labels
+        .iter()
+        .map(|l| {
+            ui.painter()
+                .layout_no_wrap((*l).to_owned(), text::body(), egui::Color32::WHITE)
+                .size()
+                .x
+        })
+        .fold(0.0, f32::max);
+    (widest + 24.0).clamp(MENU_WIDTH - 8.0, MAX_SUBMENU_WIDTH)
+}
+
+/// A [`plain_item`] `width` wide. A label too long for it is cut short
+/// with "…", and shown whole on hover.
+pub fn plain_item_sized(ui: &mut egui::Ui, p: &Palette, label: &str, width: f32) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 30.0), Sense::click());
     if response.hovered() {
         ui.painter().rect_filled(
             rect,
@@ -75,13 +98,19 @@ pub fn plain_item(ui: &mut egui::Ui, p: &Palette, label: &str) -> bool {
             p.accent_alpha(if p.dark { 0.16 } else { 0.10 }),
         );
     }
-    ui.painter().text(
-        Pos2::new(rect.left() + 10.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        label,
-        text::body(),
+    let galley =
+        crate::ui::widgets::truncated(ui, label, text::body(), p.text, rect.width() - 20.0);
+    let cut = galley.elided;
+    ui.painter().galley(
+        Pos2::new(rect.left() + 10.0, rect.center().y - galley.size().y / 2.0),
+        galley,
         p.text,
     );
+    let response = if cut {
+        response.on_hover_text(label)
+    } else {
+        response
+    };
     if response.clicked() {
         ui.close();
     }
@@ -101,11 +130,11 @@ pub fn submenu_item(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Respon
             p.accent_alpha(if p.dark { 0.16 } else { 0.10 }),
         );
     }
-    ui.painter().text(
-        Pos2::new(rect.left() + 10.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        label,
-        text::body(),
+    let galley =
+        crate::ui::widgets::truncated(ui, label, text::body(), p.text, rect.width() - 36.0);
+    ui.painter().galley(
+        Pos2::new(rect.left() + 10.0, rect.center().y - galley.size().y / 2.0),
+        galley,
         p.text,
     );
     ui.painter().text(

@@ -65,6 +65,27 @@ pub fn is_archive(path: &Path) -> bool {
     .any(|ext| name.ends_with(ext))
 }
 
+/// An archive's name without its archive ending ("photos.tar.gz" →
+/// "photos", "backup.7z" → "backup"), for the folder it extracts into.
+fn archive_stem(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let lower = name.to_lowercase();
+    // Two-part endings first, so "x.tar.gz" doesn't become "x.tar".
+    const ENDINGS: [&str; 17] = [
+        ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tgz", ".tbz2", ".txz", ".zip", ".rar",
+        ".7z", ".tar", ".gz", ".bz2", ".xz", ".zst", ".iso", ".cab",
+    ];
+    ENDINGS
+        .iter()
+        .find(|end| lower.ends_with(*end) && lower.len() > end.len())
+        .map_or(name.clone(), |end| {
+            name[..name.len() - end.len()].to_owned()
+        })
+}
+
 /// One menu entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Action {
@@ -397,7 +418,7 @@ impl Context<'_> {
     }
 
     fn stem(&self) -> String {
-        self.first().map(super::archive::stem).unwrap_or_default()
+        self.first().map(archive_stem).unwrap_or_default()
     }
 
     fn fill(&self, text: &str) -> String {
@@ -628,6 +649,21 @@ mod tests {
         std::fs::write(&plain, b"").unwrap();
         let (program, args) = app_bundle_command(&plain, &[file.clone().into()]);
         assert_eq!((program, args), (plain, vec![file.into_os_string()]));
+    }
+
+    #[test]
+    fn extract_folders_drop_the_archive_ending() {
+        let stem = |name: &str| archive_stem(Path::new(name));
+        assert_eq!(
+            stem("Ars_Icon_Theme_for_Windows_10.7z"),
+            "Ars_Icon_Theme_for_Windows_10"
+        );
+        assert_eq!(stem("backup.RAR"), "backup");
+        assert_eq!(stem("photos.tar.gz"), "photos");
+        assert_eq!(stem("logs.tar.zst"), "logs");
+        assert_eq!(stem("disc.iso"), "disc");
+        assert_eq!(stem("v1.2.zip"), "v1.2");
+        assert_eq!(stem(".7z"), ".7z");
     }
 
     #[test]
