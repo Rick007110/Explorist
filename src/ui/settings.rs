@@ -23,16 +23,18 @@ pub enum Section {
     Sorting,
     Keyboard,
     Git,
+    Integrations,
     Advanced,
 }
 
 impl Section {
-    const ALL: [Section; 6] = [
+    const ALL: [Section; 7] = [
         Section::General,
         Section::Appearance,
         Section::Sorting,
         Section::Keyboard,
         Section::Git,
+        Section::Integrations,
         Section::Advanced,
     ];
 
@@ -43,6 +45,7 @@ impl Section {
             Self::Sorting => "Sorting & view",
             Self::Keyboard => "Keyboard",
             Self::Git => "Git",
+            Self::Integrations => "Integrations",
             Self::Advanced => "Advanced",
         }
     }
@@ -60,6 +63,8 @@ pub struct SettingsState {
     pub recording: Option<Command>,
     /// "Reset all settings" was clicked once; a second click confirms.
     pub confirm_reset: Option<std::time::Instant>,
+    /// The app being added under Integrations.
+    pub new_app: crate::fs::integrations::CustomApp,
 }
 
 /// What the page changed, applied after drawing.
@@ -250,6 +255,7 @@ fn content(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mut
             Section::Sorting => sorting(ui, app, p, changes),
             Section::Keyboard => keyboard(ui, app, p, changes),
             Section::Git => git(ui, app, p, changes),
+            Section::Integrations => integrations(ui, app, p, changes),
             Section::Advanced => advanced(ui, app, p, changes),
         }
     }
@@ -334,6 +340,16 @@ fn section_rows(section: Section) -> Vec<(&'static str, &'static str)> {
             "Show git status",
             "Badges for changed files and the branch in the status bar. Needs git installed.",
         )],
+        Section::Integrations => vec![
+            (
+                "Apps in the right-click menu",
+                "WinRAR, 7-Zip, Sublime Text, Notepad++ and VS Code, when installed. Switch off any you don't want.",
+            ),
+            (
+                "Your own apps",
+                "Any other program. In its arguments, {files} is the selected items, {file} the first one and {dir} the open folder.",
+            ),
+        ],
         Section::Advanced => vec![
             ("Settings file", "Where these settings are saved."),
             ("Reset all settings", "Go back to the defaults."),
@@ -858,6 +874,144 @@ fn git(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mut Cha
     let mut s = app.settings.clone();
     row(ui, &query, p, rows[0].0, rows[0].1, |ui| {
         widgets::switch(ui, p, &mut s.git_status);
+    });
+    commit(app, s, changes);
+}
+
+fn integrations(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mut Changes) {
+    use crate::fs::integrations::{Applies, CustomApp};
+
+    let query = app.view.settings.search.clone();
+    let rows = section_rows(Section::Integrations);
+    let mut s = app.settings.clone();
+    let muted = |text: String| {
+        egui::RichText::new(text)
+            .font(crate::ui::fonts::regular(12.0))
+            .color(p.muted)
+    };
+
+    let known = app.integrations.known.clone();
+    row(ui, &query, p, rows[0].0, rows[0].1, |ui| {
+        for app in &known {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                let mut on = app.found.is_some() && !s.integrations_off.contains(app.id);
+                ui.add_enabled_ui(app.found.is_some(), |ui| {
+                    if widgets::switch(ui, p, &mut on) {
+                        if on {
+                            s.integrations_off.remove(app.id);
+                        } else {
+                            s.integrations_off.insert(app.id.to_owned());
+                        }
+                    }
+                });
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    ui.label(
+                        egui::RichText::new(app.name)
+                            .font(text::body())
+                            .color(p.text),
+                    );
+                    ui.label(muted(app.found.as_ref().map_or_else(
+                        || "Not installed".to_owned(),
+                        |path| path.display().to_string(),
+                    )));
+                });
+            });
+        }
+    });
+
+    let form = &mut app.view.settings.new_app;
+    row(ui, &query, p, rows[1].0, rows[1].1, |ui| {
+        let mut remove = None;
+        for (i, custom) in s.custom_apps.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                ui.vertical(|ui| {
+                    ui.set_width(300.0);
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    ui.label(
+                        egui::RichText::new(&custom.name)
+                            .font(text::body())
+                            .color(p.text),
+                    );
+                    ui.label(muted(format!(
+                        "{} {} · {}",
+                        custom.program.display(),
+                        if custom.args.trim().is_empty() {
+                            "{files}"
+                        } else {
+                            custom.args.trim()
+                        },
+                        custom.applies.label()
+                    )));
+                });
+                if widgets::button(ui, p, "Remove", ButtonStyle::Secondary, None).clicked() {
+                    remove = Some(i);
+                }
+            });
+        }
+        if let Some(i) = remove {
+            s.custom_apps.remove(i);
+        }
+        if !s.custom_apps.is_empty() {
+            ui.add_space(8.0);
+        }
+
+        widgets::field_label(ui, p, "Name");
+        widgets::text_field(ui, p, &mut form.name, 300.0, false, "e.g. Kate");
+        widgets::field_label(ui, p, "Program");
+        ui.horizontal(|ui| {
+            let mut program = form.program.to_string_lossy().into_owned();
+            if widgets::text_field(ui, p, &mut program, 300.0, true, "").changed() {
+                form.program = program.into();
+            }
+            if widgets::button(ui, p, "Browse…", ButtonStyle::Secondary, None).clicked()
+                && let Some(file) = rfd::FileDialog::new()
+                    .set_title("Choose a program")
+                    .pick_file()
+            {
+                if form.name.trim().is_empty() {
+                    form.name = file
+                        .file_stem()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                }
+                form.program = file;
+            }
+        });
+        widgets::field_label(ui, p, "Arguments");
+        widgets::text_field(ui, p, &mut form.args, 300.0, true, "{files}");
+        widgets::field_label(ui, p, "Shows for");
+        let kinds = [
+            Applies::Any,
+            Applies::Files,
+            Applies::Folders,
+            Applies::Archives,
+        ];
+        let labels = kinds.map(Applies::label);
+        let selected = kinds.iter().position(|k| *k == form.applies).unwrap_or(0);
+        if let Some(i) = widgets::segmented(ui, p, &labels, selected) {
+            form.applies = kinds[i];
+        }
+        let name = form.name.trim();
+        let taken = s.custom_apps.iter().any(|c| c.name == name);
+        let ready = !name.is_empty() && !form.program.as_os_str().is_empty() && !taken;
+        if taken {
+            ui.label(muted(format!("There's already an app called “{name}”.")));
+        }
+        if ui
+            .add_enabled_ui(ready, |ui| {
+                widgets::button(ui, p, "Add app", ButtonStyle::Primary, None)
+            })
+            .inner
+            .clicked()
+        {
+            let mut added = std::mem::take(form);
+            added.name = added.name.trim().to_owned();
+            s.custom_apps.push(added);
+            *form = CustomApp::default();
+        }
     });
     commit(app, s, changes);
 }

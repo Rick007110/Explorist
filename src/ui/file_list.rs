@@ -711,7 +711,40 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
         None,
         Some((Command::Properties, Command::Properties.label())),
     ];
+    // Other apps' entries go after the "Open" group.
+    let mut apps = Some(app.integration_actions()).filter(|a| !a.is_empty());
     for item in items {
+        if item.is_none()
+            && let Some(actions) = apps.take()
+        {
+            menu::separator(ui, &p);
+            let mut chosen = None;
+            for (submenu, group) in &actions {
+                match submenu {
+                    Some(name) => {
+                        let row = menu::submenu_item(ui, &p, name);
+                        egui::containers::menu::SubMenu::new().show(ui, &row, |ui| {
+                            menu::style(ui);
+                            for action in group {
+                                if menu::plain_item(ui, &p, &action.label) {
+                                    chosen = Some(action);
+                                }
+                            }
+                        });
+                    }
+                    None => {
+                        for action in group {
+                            if menu::plain_item(ui, &p, &action.label) {
+                                chosen = Some(action);
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(action) = chosen {
+                app.run_integration(action);
+            }
+        }
         match item {
             Some((command, label)) => {
                 let enabled = match command {

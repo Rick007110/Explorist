@@ -11,6 +11,7 @@ pub mod filter;
 pub mod format;
 pub mod git;
 pub mod index;
+pub mod integrations;
 pub mod jobs;
 pub mod kind;
 pub mod listing;

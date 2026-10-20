@@ -7,7 +7,8 @@ shows the first points.
 ## Unreleased
 
 ### New
-- **Folder icons**: right-click a folder and choose **Change icon…** to give it one of 60 icons (music, photos, code, games, work, star and more) in your accent color or one of ten others. It shows in the list, the grid, pinned folders in the sidebar and the start page. Works on several folders at once; **Reset to plain folder** undoes it. Icons stay with folders you rename or move in Explorist.
+- **Folder icons**: right-click a folder and choose **Change icon…** to give it one of 60 icons (music, photos, code, games, work, star and more) in your accent color or one of ten others, or **Use an image…** to pick any picture of your own (PNG, JPG, ICO, SVG, WebP, BMP or GIF). Explorist keeps its own copy of the picture, so the icon stays if the original is moved or deleted. Icons show in the list, the grid, pinned folders in the sidebar and the start page. Works on several folders at once; **Reset to plain folder** undoes it. Icons stay with folders you rename or move in Explorist.
+- **Other apps in the right-click menu**: WinRAR (add to archive, extract here, extract to a folder), 7-Zip (the same), Sublime Text, Notepad++ and VS Code show up in the menu when they're installed. Turn each one on or off in Settings → Integrations, and add any other program there yourself, with its own arguments and whether it's for files, folders or archives.
 
 ## 0.3.2
 

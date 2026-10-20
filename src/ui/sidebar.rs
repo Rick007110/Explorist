@@ -87,12 +87,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                     .folder_icon(&place.path)
                     .filter(|_| place.icon == PlaceIcon::Folder)
                 {
-                    Some(chosen) => icons::paint_named(
+                    Some(chosen) => crate::ui::folder_icon::paint_chosen(
                         ui.painter(),
+                        &p,
                         icon_rect,
-                        &chosen.icon,
+                        chosen,
                         16.0,
-                        crate::ui::folder_icon::color_of(&p, chosen.color),
+                        None,
+                        false,
                     ),
                     None => icons::paint(ui.painter(), icon_rect, icon, 16.0, icon_color),
                 }

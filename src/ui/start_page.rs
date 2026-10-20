@@ -56,12 +56,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                             .settings
                             .folder_icon(path)
                             .filter(|_| *icon == Icon::Folder)
-                            .map(|c| {
-                                (
-                                    c.icon.clone(),
-                                    crate::ui::folder_icon::color_of(&p, c.color),
-                                )
-                            });
+                            .cloned();
                         if card(
                             ui,
                             &p,
@@ -199,7 +194,7 @@ fn card(
     p: &Palette,
     rect: Rect,
     icon: Icon,
-    chosen: Option<(String, egui::Color32)>,
+    chosen: Option<crate::config::FolderIcon>,
     label: &str,
     detail: &str,
     used: Option<f32>,
@@ -221,7 +216,9 @@ fn card(
     ui.painter()
         .rect_filled(tile, CornerRadius::same(radius::SM), p.bg_2);
     match chosen {
-        Some((name, color)) => icons::paint_named(ui.painter(), tile, &name, 18.0, color),
+        Some(chosen) => {
+            crate::ui::folder_icon::paint_chosen(ui.painter(), p, tile, &chosen, 18.0, None, false)
+        }
         None => icons::paint(ui.painter(), tile, icon, 18.0, p.accent),
     }
     let text_left = tile.right() + 12.0;

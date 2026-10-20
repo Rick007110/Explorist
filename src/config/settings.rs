@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::fs::format::DateFormat;
+use crate::fs::integrations::CustomApp;
 use crate::fs::sort::{SortColumn, SortDirection, SortOrder};
 
 /// Folders that remember their own sort, at most.
@@ -48,6 +49,10 @@ pub struct Settings {
     pub search_everywhere: bool,
     /// Icons chosen for folders (path → icon and color).
     pub folder_icons: BTreeMap<String, FolderIcon>,
+    /// Built-in app integrations turned off (by id, e.g. "winrar").
+    pub integrations_off: BTreeSet<String>,
+    /// Programs added in Settings → Integrations.
+    pub custom_apps: Vec<CustomApp>,
     /// Folders open in tabs when Explorist closed, and which was active.
     pub open_tabs: Vec<PathBuf>,
     pub active_tab: usize,
@@ -98,6 +103,8 @@ impl Default for Settings {
             folder_sizes: false,
             search_everywhere: false,
             folder_icons: BTreeMap::new(),
+            integrations_off: BTreeSet::new(),
+            custom_apps: Vec::new(),
             open_tabs: Vec::new(),
             active_tab: 0,
             git_status: true,
@@ -354,6 +361,13 @@ mod tests {
                     color: Some([0x60, 0xA5, 0xFA]),
                 },
             )]),
+            integrations_off: BTreeSet::from(["vscode".to_owned()]),
+            custom_apps: vec![CustomApp {
+                name: "Kate".to_owned(),
+                program: PathBuf::from("/usr/bin/kate"),
+                args: "--new \"{file}\"".to_owned(),
+                applies: crate::fs::integrations::Applies::Files,
+            }],
             open_tabs: vec![PathBuf::from("C:\\Users"), PathBuf::from("D:\\photos")],
             active_tab: 1,
             git_status: false,

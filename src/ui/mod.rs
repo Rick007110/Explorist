@@ -8,6 +8,7 @@ pub mod folder_icon;
 pub mod fonts;
 pub mod grid;
 pub mod icons;
+pub mod image_icon;
 pub mod marquee;
 pub mod menu;
 pub mod open_with;

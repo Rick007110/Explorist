@@ -5,6 +5,7 @@ pub mod commands;
 pub mod drag;
 pub mod files;
 pub mod fuzzy;
+pub mod integrations;
 pub mod keymap;
 pub mod selection;
 pub mod sizes;
@@ -70,6 +71,8 @@ pub struct ExploristApp {
     /// Every name on the device, for searching Everywhere; built on first
     /// use and kept while Explorist runs.
     pub(crate) device_index: Option<(Instant, crate::fs::index::NameIndex)>,
+    /// Other apps for the right-click menu.
+    pub(crate) integrations: integrations::Integrations,
 }
 
 /// A background task's outcome, for a toast.
@@ -242,6 +245,7 @@ impl ExploristApp {
             drives_read: Instant::now(),
             folder_sizes: Default::default(),
             device_index: None,
+            integrations: integrations::Integrations::detect(),
         };
         // Reopen the other tabs from last time.
         if app.settings.start_in == StartIn::LastFolder && std::env::args_os().nth(1).is_none() {

@@ -88,6 +88,36 @@ pub fn plain_item(ui: &mut egui::Ui, p: &Palette, label: &str) -> bool {
     response.clicked()
 }
 
+/// A menu row that opens a submenu (shown with
+/// [`egui::containers::menu::SubMenu`] on the returned response).
+pub fn submenu_item(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(MENU_WIDTH - 8.0, 30.0), Sense::click());
+    let open = egui::containers::menu::SubMenu::id_from_widget_id(response.id);
+    let is_open = egui::Popup::is_id_open(ui.ctx(), open);
+    if response.hovered() || is_open {
+        ui.painter().rect_filled(
+            rect,
+            CornerRadius::same(radius::SM - 1),
+            p.accent_alpha(if p.dark { 0.16 } else { 0.10 }),
+        );
+    }
+    ui.painter().text(
+        Pos2::new(rect.left() + 10.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        text::body(),
+        p.text,
+    );
+    ui.painter().text(
+        Pos2::new(rect.right() - 10.0, rect.center().y),
+        Align2::RIGHT_CENTER,
+        "›",
+        text::body(),
+        p.text_2,
+    );
+    response
+}
+
 pub fn separator(ui: &mut egui::Ui, p: &Palette) {
     let (rect, _) = ui.allocate_exact_size(vec2(MENU_WIDTH - 8.0, 9.0), Sense::hover());
     ui.painter().hline(
