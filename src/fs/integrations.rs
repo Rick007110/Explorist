@@ -69,6 +69,8 @@ pub fn is_archive(path: &Path) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Action {
     pub label: String,
+    /// The label when several items are selected, if it should differ.
+    pub label_many: Option<String>,
     pub args: Vec<String>,
     pub applies: Applies,
 }
@@ -107,6 +109,7 @@ impl CustomApp {
             program: self.program.clone(),
             actions: vec![Action {
                 label: format!("Open with {}", self.name),
+                label_many: None,
                 args,
                 applies: self.applies,
             }],
@@ -157,6 +160,7 @@ struct Spec {
 fn action(label: &str, args: &[&str], applies: Applies) -> Action {
     Action {
         label: label.to_owned(),
+        label_many: None,
         args: args.iter().map(|a| (*a).to_owned()).collect(),
         applies,
     }
@@ -172,6 +176,7 @@ fn winrar_actions() -> Vec<Action> {
     vec![
         Action {
             label: "Add to “{name}.rar”".to_owned(),
+            label_many: None,
             args: vec![
                 "a".into(),
                 "-ep1".into(),
@@ -182,11 +187,13 @@ fn winrar_actions() -> Vec<Action> {
         },
         Action {
             label: "Extract here".to_owned(),
+            label_many: None,
             args: vec!["x".into(), "-o-".into(), "{file}".into(), in_dir("")],
             applies: Applies::Archives,
         },
         Action {
             label: "Extract to “{stem}”".to_owned(),
+            label_many: Some("Extract each to its own folder".to_owned()),
             args: vec![
                 "x".into(),
                 "{file}".into(),
@@ -201,16 +208,19 @@ fn seven_zip_actions() -> Vec<Action> {
     vec![
         Action {
             label: "Add to “{name}.7z”".to_owned(),
+            label_many: None,
             args: vec!["a".into(), in_dir("{name}.7z"), "{files}".into()],
             applies: Applies::Any,
         },
         Action {
             label: "Extract here".to_owned(),
+            label_many: None,
             args: vec!["x".into(), "{file}".into(), "-o{dir}".into(), "-aos".into()],
             applies: Applies::Archives,
         },
         Action {
             label: "Extract to “{stem}”".to_owned(),
+            label_many: Some("Extract each to its own folder".to_owned()),
             args: vec![
                 "x".into(),
                 "{file}".into(),
@@ -288,8 +298,22 @@ fn specs() -> Vec<Spec> {
     }
     #[cfg(target_os = "macos")]
     {
+        // Apps started from Finder get a short PATH, so look where
+        // Homebrew puts them too (Apple silicon, then Intel).
         let mut seven = in_path(&["7zz", "7z"]);
-        seven.push(PathBuf::from("/opt/homebrew/bin/7zz"));
+        for dir in ["/opt/homebrew/bin", "/usr/local/bin"] {
+            for name in ["7zz", "7z"] {
+                seven.push(Path::new(dir).join(name));
+            }
+        }
+        // Apps can be in the user's own Applications folder too.
+        let apps = |rel: &str| -> Vec<PathBuf> {
+            let mut found = vec![Path::new("/Applications").join(rel)];
+            if let Some(home) = dirs::home_dir() {
+                found.push(home.join("Applications").join(rel));
+            }
+            found
+        };
         vec![
             Spec {
                 id: "7zip",
@@ -300,17 +324,13 @@ fn specs() -> Vec<Spec> {
             Spec {
                 id: "sublime",
                 name: "Sublime Text",
-                candidates: vec![PathBuf::from(
-                    "/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl",
-                )],
+                candidates: apps("Sublime Text.app/Contents/SharedSupport/bin/subl"),
                 actions: sublime_actions,
             },
             Spec {
                 id: "vscode",
                 name: "VS Code",
-                candidates: vec![PathBuf::from(
-                    "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
-                )],
+                candidates: apps("Visual Studio Code.app/Contents/Resources/app/bin/code"),
                 actions: vscode_actions,
             },
         ]
@@ -393,13 +413,41 @@ impl Context<'_> {
             .replace("{stem}", &self.stem())
     }
 
-    /// The menu label, with names filled in.
-    pub fn label(&self, action: &Action) -> String {
-        self.fill(&action.label)
+    /// Whether `action` runs once per selected item: it names one item
+    /// (`{file}`, `{stem}`) rather than taking them all (`{files}`).
+    fn per_item(&self, action: &Action) -> bool {
+        self.selection.len() > 1 && !action.args.iter().any(|a| a == "{files}")
     }
 
-    /// The arguments to run `action` with.
-    pub fn args(&self, action: &Action) -> Vec<OsString> {
+    /// The menu label, with names filled in.
+    pub fn label(&self, action: &Action) -> String {
+        match &action.label_many {
+            Some(many) if self.selection.len() > 1 => many.clone(),
+            _ => self.fill(&action.label),
+        }
+    }
+
+    /// The argument lists to run `action` with: one, or one per selected
+    /// item for actions that work on a single item (extracting several
+    /// archives extracts each).
+    pub fn runs(&self, action: &Action) -> Vec<Vec<OsString>> {
+        if self.per_item(action) {
+            self.selection
+                .iter()
+                .map(|item| {
+                    Context {
+                        selection: std::slice::from_ref(item),
+                        dir: self.dir,
+                    }
+                    .args(action)
+                })
+                .collect()
+        } else {
+            vec![self.args(action)]
+        }
+    }
+
+    fn args(&self, action: &Action) -> Vec<OsString> {
         let mut out = Vec::new();
         for arg in &action.args {
             if arg == "{files}" {
@@ -414,6 +462,8 @@ impl Context<'_> {
 
 /// Starts `program` with `args`, in `dir`.
 pub fn run(program: &Path, args: &[OsString], dir: &Path) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    let (program, args) = &app_bundle_command(program, args);
     let mut command = std::process::Command::new(program);
     command.args(args).current_dir(dir);
     #[cfg(windows)]
@@ -424,6 +474,28 @@ pub fn run(program: &Path, args: &[OsString], dir: &Path) -> io::Result<()> {
         command.creation_flags(CREATE_NO_WINDOW);
     }
     command.spawn().map(drop)
+}
+
+/// A macOS app (`Kate.app`) is a folder, so it's started with `open -a`:
+/// paths go to it as documents to open, anything else after `--args`.
+/// Other programs run as they are.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn app_bundle_command(program: &Path, args: &[OsString]) -> (PathBuf, Vec<OsString>) {
+    let bundle = program.is_dir()
+        && program
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("app"));
+    if !bundle {
+        return (program.to_path_buf(), args.to_vec());
+    }
+    let mut out = vec![OsString::from("-a"), program.as_os_str().to_owned()];
+    if args.iter().all(|a| Path::new(a).exists()) {
+        out.extend(args.iter().cloned());
+    } else {
+        out.push("--args".into());
+        out.extend(args.iter().cloned());
+    }
+    (PathBuf::from("/usr/bin/open"), out)
 }
 
 /// Splits on spaces, keeping "double quoted" parts together.
@@ -478,6 +550,7 @@ mod tests {
         );
         assert_eq!(ctx.label(&action), "Do photos.tar photos");
         let args = ctx.args(&action);
+        assert_eq!(ctx.runs(&action), std::slice::from_ref(&args));
         assert_eq!(
             args,
             [
@@ -501,6 +574,60 @@ mod tests {
             dir: dir.path(),
         };
         assert_eq!(ctx.label(&winrar_actions()[0]), "Add to “Holiday 2026.rar”");
+    }
+
+    #[test]
+    fn extracting_several_archives_extracts_each() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.zip");
+        let b = dir.path().join("b.tar.gz");
+        let selection = [a.clone(), b.clone()];
+        let ctx = Context {
+            selection: &selection,
+            dir: dir.path(),
+        };
+        let [add, here, to] = &seven_zip_actions()[..] else {
+            panic!("three actions")
+        };
+        // Adding takes them all at once.
+        assert_eq!(ctx.runs(add).len(), 1);
+        // Extracting runs once per archive, each into its own folder.
+        let runs = ctx.runs(to);
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0][1], a.as_os_str());
+        assert_eq!(runs[1][1], b.as_os_str());
+        let folder = |run: &Vec<OsString>| run[2].to_string_lossy().into_owned();
+        assert!(folder(&runs[0]).ends_with("a"));
+        assert!(folder(&runs[1]).ends_with("b"));
+        assert_eq!(ctx.runs(here).len(), 2);
+        assert_eq!(ctx.label(to), "Extract each to its own folder");
+        assert_eq!(ctx.label(here), "Extract here");
+    }
+
+    #[test]
+    fn app_bundles_open_with_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = dir.path().join("Kate.app");
+        std::fs::create_dir(&bundle).unwrap();
+        let file = dir.path().join("notes.txt");
+        std::fs::write(&file, b"").unwrap();
+        let (program, args) = app_bundle_command(&bundle, &[file.clone().into_os_string()]);
+        assert_eq!(program, Path::new("/usr/bin/open"));
+        assert_eq!(
+            args,
+            [
+                OsString::from("-a"),
+                bundle.clone().into_os_string(),
+                file.clone().into_os_string()
+            ]
+        );
+        let (_, args) = app_bundle_command(&bundle, &["--new".into(), file.clone().into()]);
+        assert_eq!(args[2], "--args");
+        // A plain program runs as it is.
+        let plain = dir.path().join("tool");
+        std::fs::write(&plain, b"").unwrap();
+        let (program, args) = app_bundle_command(&plain, &[file.clone().into()]);
+        assert_eq!((program, args), (plain, vec![file.into_os_string()]));
     }
 
     #[test]

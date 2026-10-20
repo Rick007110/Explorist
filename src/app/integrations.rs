@@ -23,7 +23,8 @@ impl Integrations {
 pub struct MenuAction {
     pub label: String,
     program: PathBuf,
-    args: Vec<OsString>,
+    /// One argument list per time the program is started.
+    runs: Vec<Vec<OsString>>,
 }
 
 impl ExploristApp {
@@ -68,7 +69,7 @@ impl ExploristApp {
                 .map(|action| MenuAction {
                     label: ctx.label(action),
                     program: app.program.clone(),
-                    args: ctx.args(action),
+                    runs: ctx.runs(action),
                 })
                 .collect();
             if !actions.is_empty() {
@@ -80,11 +81,14 @@ impl ExploristApp {
 
     pub(crate) fn run_integration(&mut self, action: &MenuAction) {
         let dir = self.browser.location().to_path_buf();
-        if let Err(err) = integrations::run(&action.program, &action.args, &dir) {
-            self.toast_error(format!(
-                "Couldn't start {}: {err}",
-                action.program.display()
-            ));
+        for args in &action.runs {
+            if let Err(err) = integrations::run(&action.program, args, &dir) {
+                self.toast_error(format!(
+                    "Couldn't start {}: {err}",
+                    action.program.display()
+                ));
+                return;
+            }
         }
     }
 }
