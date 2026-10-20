@@ -4,6 +4,11 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
+## Unreleased
+
+### New
+- **Folder icons**: right-click a folder and choose **Change icon…** to give it one of 60 icons (music, photos, code, games, work, star and more) in your accent color or one of ten others. It shows in the list, the grid, pinned folders in the sidebar and the start page. Works on several folders at once; **Reset to plain folder** undoes it. Icons stay with folders you rename or move in Explorist.
+
 ## 0.3.2
 
 ### Changed

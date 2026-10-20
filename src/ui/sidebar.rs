@@ -77,16 +77,25 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                 } else {
                     fg
                 };
-                icons::paint(
-                    ui.painter(),
-                    Rect::from_min_size(
-                        Pos2::new(rect.left() + 10.0, rect.center().y - 8.0),
-                        vec2(16.0, 16.0),
-                    ),
-                    icon,
-                    16.0,
-                    icon_color,
+                let icon_rect = Rect::from_min_size(
+                    Pos2::new(rect.left() + 10.0, rect.center().y - 8.0),
+                    vec2(16.0, 16.0),
                 );
+                // Pinned folders show the icon chosen for them.
+                match app
+                    .settings
+                    .folder_icon(&place.path)
+                    .filter(|_| place.icon == PlaceIcon::Folder)
+                {
+                    Some(chosen) => icons::paint_named(
+                        ui.painter(),
+                        icon_rect,
+                        &chosen.icon,
+                        16.0,
+                        crate::ui::folder_icon::color_of(&p, chosen.color),
+                    ),
+                    None => icons::paint(ui.painter(), icon_rect, icon, 16.0, icon_color),
+                }
                 let font = if active {
                     text::body_medium()
                 } else {

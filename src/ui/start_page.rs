@@ -52,7 +52,27 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                     heading(ui, &p, "Favorites");
                     cards(ui, width, places.len(), |ui, i, rect| {
                         let (label, detail, path, icon) = &places[i];
-                        if card(ui, &p, rect, *icon, label, detail, None, ("place", i)) {
+                        let chosen = app
+                            .settings
+                            .folder_icon(path)
+                            .filter(|_| *icon == Icon::Folder)
+                            .map(|c| {
+                                (
+                                    c.icon.clone(),
+                                    crate::ui::folder_icon::color_of(&p, c.color),
+                                )
+                            });
+                        if card(
+                            ui,
+                            &p,
+                            rect,
+                            *icon,
+                            chosen,
+                            label,
+                            detail,
+                            None,
+                            ("place", i),
+                        ) {
                             go = Some(path.clone());
                         }
                     });
@@ -73,6 +93,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
                             &p,
                             rect,
                             Icon::Drive,
+                            None,
                             &name,
                             &detail,
                             drive.used_fraction(),
@@ -178,6 +199,7 @@ fn card(
     p: &Palette,
     rect: Rect,
     icon: Icon,
+    chosen: Option<(String, egui::Color32)>,
     label: &str,
     detail: &str,
     used: Option<f32>,
@@ -198,7 +220,10 @@ fn card(
     let tile = Rect::from_min_size(rect.min + vec2(12.0, 14.0), vec2(36.0, 36.0));
     ui.painter()
         .rect_filled(tile, CornerRadius::same(radius::SM), p.bg_2);
-    icons::paint(ui.painter(), tile, icon, 18.0, p.accent);
+    match chosen {
+        Some((name, color)) => icons::paint_named(ui.painter(), tile, &name, 18.0, color),
+        None => icons::paint(ui.painter(), tile, icon, 18.0, p.accent),
+    }
     let text_left = tile.right() + 12.0;
     let max = rect.right() - text_left - 12.0;
     let name = crate::ui::widgets::truncated(ui, label, text::body_medium(), p.text, max);

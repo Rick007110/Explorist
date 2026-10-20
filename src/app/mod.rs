@@ -94,6 +94,7 @@ pub struct ViewState {
     pub properties: Option<crate::ui::properties::PropertiesState>,
     pub open_with: Option<crate::ui::open_with::OpenWithState>,
     pub drive_dialog: Option<crate::ui::drive_dialog::DriveDialog>,
+    pub folder_icon: Option<crate::ui::folder_icon::FolderIconState>,
     /// Quick Look is showing the focused item.
     pub quick_look: bool,
     /// Rename this item once the running job ends (New folder with
@@ -507,6 +508,7 @@ impl ExploristApp {
             || self.view.properties.is_some()
             || self.view.open_with.is_some()
             || self.view.drive_dialog.is_some()
+            || self.view.folder_icon.is_some()
             || self.view.palette.is_some()
             || self.view.batch.is_some()
         {
@@ -774,6 +776,21 @@ impl ExploristApp {
                     self.toast_error(format!("Couldn’t open as administrator: {err}"));
                 }
             }
+            Command::FolderIcon => {
+                let folders: Vec<PathBuf> = self
+                    .browser
+                    .selected_entries()
+                    .iter()
+                    .filter(|e| e.is_dir)
+                    .map(|e| e.path.clone())
+                    .collect();
+                if folders.is_empty() {
+                    self.toast("Select a folder to change its icon".to_owned(), false);
+                } else {
+                    self.view.folder_icon =
+                        Some(ui::folder_icon::FolderIconState::new(self, folders));
+                }
+            }
             Command::Duplicate => self.duplicate_selection(),
             Command::Compress => self.compress_selection(),
             Command::Extract => self.extract_selection(),
@@ -1006,6 +1023,7 @@ impl ExploristApp {
                     Err(_) => self.browser.refresh(),
                 }
                 self.browser.selection.select_only(&to);
+                self.carry_folder_icons(&[(from.clone(), to.clone())]);
                 let action = Action::Rename { from, to };
                 self.toast(action.done_message(), true);
                 self.undo.push(action);
@@ -1144,6 +1162,7 @@ impl eframe::App for ExploristApp {
         ui::properties::show(&ctx, self);
         ui::open_with::show(&ctx, self);
         ui::drive_dialog::show(&ctx, self);
+        ui::folder_icon::show(&ctx, self);
         ui::quick_look::show(&ctx, self);
         ui::palette::show(&ctx, self);
         ui::batch_rename::show(&ctx, self);

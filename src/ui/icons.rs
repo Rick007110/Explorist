@@ -143,22 +143,268 @@ pub fn paint_stroked(
         window_button(painter, target, icon, color);
         return;
     };
+    paint_svg(
+        painter,
+        target,
+        IconKey::Fixed(icon),
+        svg,
+        size,
+        width,
+        color,
+    );
+}
+
+/// Icons people can give a folder, by name, in the order the picker shows
+/// them. The first is the usual folder.
+pub const FOLDER_ICONS: &[(&str, &str)] = &[
+    (
+        "folder",
+        include_str!("../../assets/icons/lucide/folder.svg"),
+    ),
+    (
+        "folder-open",
+        include_str!("../../assets/icons/lucide/folder-open.svg"),
+    ),
+    (
+        "folder-heart",
+        include_str!("../../assets/icons/lucide/folder-heart.svg"),
+    ),
+    (
+        "folder-code",
+        include_str!("../../assets/icons/lucide/folder-code.svg"),
+    ),
+    (
+        "folder-git-2",
+        include_str!("../../assets/icons/lucide/folder-git-2.svg"),
+    ),
+    (
+        "folder-kanban",
+        include_str!("../../assets/icons/lucide/folder-kanban.svg"),
+    ),
+    (
+        "folder-lock",
+        include_str!("../../assets/icons/lucide/folder-lock.svg"),
+    ),
+    (
+        "folder-archive",
+        include_str!("../../assets/icons/lucide/folder-archive.svg"),
+    ),
+    (
+        "folder-cog",
+        include_str!("../../assets/icons/lucide/folder-cog.svg"),
+    ),
+    (
+        "folder-key",
+        include_str!("../../assets/icons/lucide/folder-key.svg"),
+    ),
+    (
+        "folder-dot",
+        include_str!("../../assets/icons/lucide/folder-dot.svg"),
+    ),
+    ("star", include_str!("../../assets/icons/lucide/star.svg")),
+    ("heart", include_str!("../../assets/icons/lucide/heart.svg")),
+    (
+        "bookmark",
+        include_str!("../../assets/icons/lucide/bookmark.svg"),
+    ),
+    ("flag", include_str!("../../assets/icons/lucide/flag.svg")),
+    (
+        "trophy",
+        include_str!("../../assets/icons/lucide/trophy.svg"),
+    ),
+    (
+        "sparkles",
+        include_str!("../../assets/icons/lucide/sparkles.svg"),
+    ),
+    (
+        "rocket",
+        include_str!("../../assets/icons/lucide/rocket.svg"),
+    ),
+    ("zap", include_str!("../../assets/icons/lucide/zap.svg")),
+    (
+        "briefcase",
+        include_str!("../../assets/icons/lucide/briefcase.svg"),
+    ),
+    (
+        "wallet",
+        include_str!("../../assets/icons/lucide/wallet.svg"),
+    ),
+    (
+        "receipt",
+        include_str!("../../assets/icons/lucide/receipt.svg"),
+    ),
+    (
+        "shopping-cart",
+        include_str!("../../assets/icons/lucide/shopping-cart.svg"),
+    ),
+    (
+        "calendar",
+        include_str!("../../assets/icons/lucide/calendar.svg"),
+    ),
+    ("mail", include_str!("../../assets/icons/lucide/mail.svg")),
+    ("inbox", include_str!("../../assets/icons/lucide/inbox.svg")),
+    (
+        "book-open",
+        include_str!("../../assets/icons/lucide/book-open.svg"),
+    ),
+    (
+        "graduation-cap",
+        include_str!("../../assets/icons/lucide/graduation-cap.svg"),
+    ),
+    (
+        "file-text",
+        include_str!("../../assets/icons/lucide/file-text.svg"),
+    ),
+    ("code", include_str!("../../assets/icons/lucide/code.svg")),
+    (
+        "terminal",
+        include_str!("../../assets/icons/lucide/terminal.svg"),
+    ),
+    (
+        "database",
+        include_str!("../../assets/icons/lucide/database.svg"),
+    ),
+    (
+        "server",
+        include_str!("../../assets/icons/lucide/server.svg"),
+    ),
+    ("globe", include_str!("../../assets/icons/lucide/globe.svg")),
+    ("cloud", include_str!("../../assets/icons/lucide/cloud.svg")),
+    (
+        "package",
+        include_str!("../../assets/icons/lucide/package.svg"),
+    ),
+    ("box", include_str!("../../assets/icons/lucide/box.svg")),
+    (
+        "layers",
+        include_str!("../../assets/icons/lucide/layers.svg"),
+    ),
+    (
+        "archive",
+        include_str!("../../assets/icons/lucide/archive.svg"),
+    ),
+    (
+        "download",
+        include_str!("../../assets/icons/lucide/download.svg"),
+    ),
+    ("music", include_str!("../../assets/icons/lucide/music.svg")),
+    ("image", include_str!("../../assets/icons/lucide/image.svg")),
+    (
+        "camera",
+        include_str!("../../assets/icons/lucide/camera.svg"),
+    ),
+    ("film", include_str!("../../assets/icons/lucide/film.svg")),
+    ("video", include_str!("../../assets/icons/lucide/video.svg")),
+    (
+        "gamepad-2",
+        include_str!("../../assets/icons/lucide/gamepad-2.svg"),
+    ),
+    (
+        "palette",
+        include_str!("../../assets/icons/lucide/palette.svg"),
+    ),
+    (
+        "pen-tool",
+        include_str!("../../assets/icons/lucide/pen-tool.svg"),
+    ),
+    (
+        "lightbulb",
+        include_str!("../../assets/icons/lucide/lightbulb.svg"),
+    ),
+    (
+        "wrench",
+        include_str!("../../assets/icons/lucide/wrench.svg"),
+    ),
+    (
+        "shield",
+        include_str!("../../assets/icons/lucide/shield.svg"),
+    ),
+    ("lock", include_str!("../../assets/icons/lucide/lock.svg")),
+    ("key", include_str!("../../assets/icons/lucide/key.svg")),
+    ("house", include_str!("../../assets/icons/lucide/house.svg")),
+    ("users", include_str!("../../assets/icons/lucide/users.svg")),
+    ("user", include_str!("../../assets/icons/lucide/user.svg")),
+    ("leaf", include_str!("../../assets/icons/lucide/leaf.svg")),
+    (
+        "coffee",
+        include_str!("../../assets/icons/lucide/coffee.svg"),
+    ),
+    ("plane", include_str!("../../assets/icons/lucide/plane.svg")),
+    ("car", include_str!("../../assets/icons/lucide/car.svg")),
+    (
+        "dumbbell",
+        include_str!("../../assets/icons/lucide/dumbbell.svg"),
+    ),
+    (
+        "trash-2",
+        include_str!("../../assets/icons/lucide/trash-2.svg"),
+    ),
+];
+
+/// Draws one of [`FOLDER_ICONS`] by name; unknown names draw the plain
+/// folder.
+pub fn paint_named(painter: &Painter, rect: Rect, name: &str, size: f32, color: Color32) {
+    paint_named_stroked(painter, rect, name, size, 2.0 * size / 24.0, color);
+}
+
+/// Like [`paint_named`], with lines `width` points wide.
+pub fn paint_named_stroked(
+    painter: &Painter,
+    rect: Rect,
+    name: &str,
+    size: f32,
+    width: f32,
+    color: Color32,
+) {
+    let (name, svg) = FOLDER_ICONS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .copied()
+        .unwrap_or(FOLDER_ICONS[0]);
+    let target = Rect::from_center_size(rect.center(), vec2(size, size));
+    paint_svg(
+        painter,
+        target,
+        IconKey::Named(name),
+        svg,
+        size,
+        width,
+        color,
+    );
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum IconKey {
+    Fixed(Icon),
+    Named(&'static str),
+}
+
+/// Paints `svg` into `target`, from a texture made once per size and
+/// stroke.
+fn paint_svg(
+    painter: &Painter,
+    target: Rect,
+    key: IconKey,
+    svg: &str,
+    size: f32,
+    width: f32,
+    color: Color32,
+) {
     let ppp = painter.ctx().pixels_per_point();
     let pixels = (size * ppp).round().max(1.0) as u32;
     // In twentieths of a viewBox unit, so near-equal sizes share a texture.
     let stroke = ((width * 24.0 / size) * 20.0).round() as u32;
-    let key = (icon, pixels, stroke);
 
-    type Cache = HashMap<(Icon, u32, u32), Option<TextureHandle>>;
+    type Cache = HashMap<(IconKey, u32, u32), Option<TextureHandle>>;
     static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
     let mut cache = CACHE
         .get_or_init(Default::default)
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let texture = cache.entry(key).or_insert_with(|| {
+    let texture = cache.entry((key, pixels, stroke)).or_insert_with(|| {
         let image = rasterize(svg, pixels, stroke as f32 / 20.0)?;
         Some(painter.ctx().load_texture(
-            format!("icon:{icon:?}:{pixels}:{stroke}"),
+            format!("icon:{key:?}:{pixels}:{stroke}"),
             image,
             egui::TextureOptions::LINEAR,
         ))
@@ -315,5 +561,17 @@ mod tests {
                 .sum::<u32>()
         };
         assert!(ink(1.0) < ink(2.0));
+    }
+
+    #[test]
+    fn every_folder_icon_renders() {
+        for (name, svg) in FOLDER_ICONS {
+            let image = rasterize(svg, 24, 2.0).unwrap_or_else(|| panic!("{name} didn't render"));
+            assert!(
+                image.pixels.iter().any(|p| p.a() > 0),
+                "{name} came out empty"
+            );
+        }
+        assert_eq!(FOLDER_ICONS[0].0, "folder");
     }
 }

@@ -641,6 +641,7 @@ impl ExploristApp {
             );
         }
         if !outcome.done.is_empty() {
+            self.carry_folder_icons(&outcome.done);
             self.push_undo(crate::app::undo::Action::BatchRename {
                 pairs: outcome.done,
             });

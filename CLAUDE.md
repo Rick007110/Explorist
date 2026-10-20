@@ -27,7 +27,9 @@
 
 ## Releasing, once asked
 
-1. Add a `## <version>` section to `CHANGELOG.md` in plain words for users.
+1. Rename the changelog's `## Unreleased` section to `## <version>` (or add
+   one), in plain words for users. Changes between releases go under
+   `## Unreleased`.
 2. Set `version` in `Cargo.toml`, commit, push `main`, then
    `git push origin main:release`. The Release workflow builds and publishes
    everything; its notes come from the changelog section.

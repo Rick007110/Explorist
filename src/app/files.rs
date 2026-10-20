@@ -83,6 +83,18 @@ impl ExploristApp {
         }
     }
 
+    /// Keeps chosen folder icons with folders that were renamed or moved:
+    /// `(old path, new path)` pairs.
+    pub(crate) fn carry_folder_icons(&mut self, pairs: &[(PathBuf, PathBuf)]) {
+        if self.settings.folder_icons.is_empty() || pairs.is_empty() {
+            return;
+        }
+        for (from, to) in pairs {
+            self.settings.move_folder_icons(from, to);
+        }
+        self.save_settings();
+    }
+
     /// Ctrl D: copies of the selection, beside it.
     pub(crate) fn duplicate_selection(&mut self) {
         let paths = self.selected_paths();
@@ -161,6 +173,18 @@ impl ExploristApp {
             Undo::Job(work, message) => self.start_job(work, Some(message), false),
             Undo::Done(Ok(message)) => {
                 self.toast(message, false);
+                // Folder icons go back with the names.
+                match &action {
+                    Action::Rename { from, to } => {
+                        self.carry_folder_icons(&[(to.clone(), from.clone())]);
+                    }
+                    Action::BatchRename { pairs } => {
+                        let back: Vec<_> =
+                            pairs.iter().map(|(a, b)| (b.clone(), a.clone())).collect();
+                        self.carry_folder_icons(&back);
+                    }
+                    _ => {}
+                }
                 // Re-read first: refresh replaces any pending selection.
                 self.browser.refresh();
                 let reselect = match &action {
@@ -202,6 +226,16 @@ impl ExploristApp {
     fn finish_job(&mut self, running: RunningJob, outcome: Outcome) {
         // Free space changed.
         self.refresh_drives_soon();
+        // Moved folders keep their icons.
+        if matches!(
+            running.job.work,
+            Work::Transfer {
+                kind: TransferKind::Move,
+                ..
+            }
+        ) {
+            self.carry_folder_icons(&outcome.done);
+        }
         let here = self.browser.location().to_path_buf();
         let inside = |p: &Path| p.parent() == Some(here.as_path());
 

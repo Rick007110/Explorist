@@ -73,6 +73,8 @@ pub enum Command {
     OpenInNewWindow,
     /// Space: a large preview of the focused item.
     QuickLook,
+    /// Pick an icon and color for the selected folders.
+    FolderIcon,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +141,7 @@ impl Command {
             Self::InvertSelection => "Invert selection",
             Self::OpenInNewWindow => "Open in new window",
             Self::QuickLook => "Quick Look",
+            Self::FolderIcon => "Change icon…",
         }
     }
 
@@ -217,7 +220,7 @@ impl Command {
     ];
 
     /// Commands offered in the palette, in order of usefulness.
-    pub const PALETTE: [Command; 39] = [
+    pub const PALETTE: [Command; 40] = [
         Command::Open,
         Command::OpenWith,
         Command::Rename,
@@ -254,6 +257,7 @@ impl Command {
         Command::Compress,
         Command::Extract,
         Command::NewFolderWithSelection,
+        Command::FolderIcon,
         Command::SelectNone,
         Command::InvertSelection,
         Command::OpenSettings,
@@ -270,6 +274,7 @@ impl Command {
                 | Self::Compress
                 | Self::Extract
                 | Self::NewFolderWithSelection
+                | Self::FolderIcon
                 | Self::QuickLook
                 | Self::Rename
                 | Self::Copy

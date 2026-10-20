@@ -46,6 +46,8 @@ pub struct Settings {
     /// File search looks everywhere on the device, not just in the open
     /// folder.
     pub search_everywhere: bool,
+    /// Icons chosen for folders (path → icon and color).
+    pub folder_icons: BTreeMap<String, FolderIcon>,
     /// Folders open in tabs when Explorist closed, and which was active.
     pub open_tabs: Vec<PathBuf>,
     pub active_tab: usize,
@@ -59,6 +61,14 @@ pub enum StartIn {
     #[default]
     Home,
     LastFolder,
+}
+
+/// An icon chosen for a folder: one of the app's icon names, and a color
+/// (`None` uses the accent color).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FolderIcon {
+    pub icon: String,
+    pub color: Option<[u8; 3]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +97,7 @@ impl Default for Settings {
             grid_view: false,
             folder_sizes: false,
             search_everywhere: false,
+            folder_icons: BTreeMap::new(),
             open_tabs: Vec::new(),
             active_tab: 0,
             git_status: true,
@@ -171,6 +182,50 @@ impl Settings {
             sort.direction = own.direction;
         }
         sort
+    }
+
+    /// The icon chosen for `folder`, if any.
+    pub fn folder_icon(&self, folder: &Path) -> Option<&FolderIcon> {
+        if self.folder_icons.is_empty() {
+            return None;
+        }
+        self.folder_icons.get(&folder_key(folder))
+    }
+
+    /// Sets or (with `None`) clears `folder`'s icon.
+    pub fn set_folder_icon(&mut self, folder: &Path, icon: Option<FolderIcon>) {
+        let key = folder_key(folder);
+        match icon {
+            Some(icon) => {
+                self.folder_icons.insert(key, icon);
+            }
+            None => {
+                self.folder_icons.remove(&key);
+            }
+        }
+    }
+
+    /// Keeps folder icons with their folders when they're renamed or
+    /// moved: `from` (and anything inside it) becomes `to`.
+    pub fn move_folder_icons(&mut self, from: &Path, to: &Path) {
+        if self.folder_icons.is_empty() {
+            return;
+        }
+        let from_key = folder_key(from);
+        let to_key = folder_key(to);
+        let sep = std::path::MAIN_SEPARATOR;
+        let moved: Vec<String> = self
+            .folder_icons
+            .keys()
+            .filter(|k| **k == from_key || k.starts_with(&format!("{from_key}{sep}")))
+            .cloned()
+            .collect();
+        for key in moved {
+            if let Some(icon) = self.folder_icons.remove(&key) {
+                let new_key = format!("{to_key}{}", &key[from_key.len()..]);
+                self.folder_icons.insert(new_key, icon);
+            }
+        }
     }
 
     /// Remembers a sort chosen by hand for `folder`.
@@ -292,6 +347,13 @@ mod tests {
             grid_view: true,
             folder_sizes: true,
             search_everywhere: true,
+            folder_icons: BTreeMap::from([(
+                "d:\\photos".to_owned(),
+                FolderIcon {
+                    icon: "camera".to_owned(),
+                    color: Some([0x60, 0xA5, 0xFA]),
+                },
+            )]),
             open_tabs: vec![PathBuf::from("C:\\Users"), PathBuf::from("D:\\photos")],
             active_tab: 1,
             git_status: false,
@@ -371,5 +433,31 @@ mod tests {
     #[test]
     fn defaults_check_for_updates() {
         assert!(Settings::default().updates.check_automatically);
+    }
+
+    #[test]
+    fn folder_icons_follow_renames() {
+        let mut s = Settings::default();
+        let root = std::path::PathBuf::from("/home/me");
+        let icon = |name: &str| FolderIcon {
+            icon: name.to_owned(),
+            color: None,
+        };
+        s.set_folder_icon(&root.join("Music"), Some(icon("music")));
+        s.set_folder_icon(&root.join("Music").join("Live"), Some(icon("star")));
+        s.set_folder_icon(&root.join("Musicals"), Some(icon("film")));
+        s.move_folder_icons(&root.join("Music"), &root.join("Songs"));
+        assert_eq!(s.folder_icon(&root.join("Songs")).unwrap().icon, "music");
+        assert_eq!(
+            s.folder_icon(&root.join("Songs").join("Live"))
+                .unwrap()
+                .icon,
+            "star"
+        );
+        // A different folder that merely starts with the same letters stays.
+        assert_eq!(s.folder_icon(&root.join("Musicals")).unwrap().icon, "film");
+        assert!(s.folder_icon(&root.join("Music")).is_none());
+        s.set_folder_icon(&root.join("Songs"), None);
+        assert!(s.folder_icon(&root.join("Songs")).is_none());
     }
 }

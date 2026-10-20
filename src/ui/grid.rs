@@ -17,7 +17,6 @@ use crate::fs::entry::Entry;
 use crate::fs::git::FileState as GitState;
 use crate::fs::kind::FileKind;
 use crate::fs::thumbs::Thumbnailer;
-use crate::ui::icons::{self, Icon};
 use crate::ui::theme::{radius, text};
 
 /// Narrowest a tile gets before a column is dropped.
@@ -263,13 +262,15 @@ fn tile(
             p.text_2
         };
         let side = if entry.is_dir { 44.0 } else { 38.0 };
-        icons::paint_stroked(
+        crate::ui::folder_icon::paint_entry_icon(
             ui.painter(),
+            app,
             Rect::from_center_size(art.center(), vec2(side, side)),
-            Icon::for_kind(entry.kind),
+            &entry,
             side,
-            2.0,
+            Some(2.0),
             color,
+            dim,
         );
     }
     if let Some(state) = git.filter(|g| *g != GitState::Ignored) {

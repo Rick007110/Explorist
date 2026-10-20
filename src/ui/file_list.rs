@@ -420,12 +420,8 @@ fn draw_row(
         Pos2::new(name_cell.left(), rect.center().y - 8.0),
         vec2(16.0, 16.0),
     );
-    icons::paint(
-        painter,
-        icon_rect,
-        Icon::for_kind(entry.kind),
-        16.0,
-        icon_color,
+    crate::ui::folder_icon::paint_entry_icon(
+        painter, app, icon_rect, &entry, 16.0, None, icon_color, dim,
     );
     let name_rect = Rect::from_min_max(
         Pos2::new(icon_rect.right() + 10.0, rect.top()),
@@ -705,6 +701,7 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
         Some((Command::Rename, Command::Rename.label())),
         Some((Command::BatchRename, Command::BatchRename.label())),
         Some((Command::PinFolder, Command::PinFolder.label())),
+        Some((Command::FolderIcon, Command::FolderIcon.label())),
         None,
         Some((Command::Trash, Command::Trash.label())),
         Some((
@@ -719,7 +716,7 @@ fn row_menu(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Comman
             Some((command, label)) => {
                 let enabled = match command {
                     Command::Rename => !many,
-                    Command::PinFolder | Command::OpenInNewTab => any_folder,
+                    Command::PinFolder | Command::OpenInNewTab | Command::FolderIcon => any_folder,
                     Command::OpenWith => any_file,
                     Command::OpenInNewWindow => any_folder && !many,
                     Command::Extract => any_archive,
