@@ -302,7 +302,10 @@ fn section_rows(section: Section) -> Vec<(&'static str, &'static str)> {
             ("Start in", "The folder Explorist opens with."),
             ("Show hidden files", "Hidden and system items. Also Ctrl H."),
             ("Pinned folders", "Shown under Favorites in the sidebar."),
-            ("Updates", "Check for a new version once a day."),
+            (
+                "Updates",
+                "Checks for a new version when Explorist starts and every few hours while it runs.",
+            ),
             (
                 "Close to tray",
                 "Closing the window keeps Explorist running in the tray (the menu bar on macOS), so it opens instantly. Quit from its icon. Off: closing quits.",

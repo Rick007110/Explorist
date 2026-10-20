@@ -40,16 +40,47 @@ fn now_secs() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
+/// Starting (or reopening from the tray) checks again only after this
+/// long, so restarting a few times doesn't check each time.
+const RECHECK_AFTER: i64 = 15 * 60;
+/// While Explorist keeps running (in the tray, say), it checks this often.
+const CHECK_EVERY: i64 = 4 * 60 * 60;
+
+/// Whether `last` (seconds) is more than `gap` before `now`. A last check
+/// in the future (the clock was turned back) counts as due.
+fn due(last: Option<i64>, now: i64, gap: i64) -> bool {
+    last.is_none_or(|t| now < t || now - t > gap)
+}
+
 impl ExploristApp {
-    /// At startup: check if allowed and the last check was over a day ago.
+    /// At startup and when the window comes back from the tray: check,
+    /// unless that was done minutes ago.
     pub(crate) fn maybe_check_for_updates(&mut self) {
-        let due = self
-            .settings
-            .updates
-            .last_checked
-            .is_none_or(|t| now_secs() - t > 24 * 60 * 60);
-        if self.settings.updates.check_automatically && due {
+        if self.settings.updates.check_automatically
+            && due(
+                self.settings.updates.last_checked,
+                now_secs(),
+                RECHECK_AFTER,
+            )
+        {
             self.check_for_updates(false);
+        }
+    }
+
+    /// Each frame: check again once [`CHECK_EVERY`] has passed, and make
+    /// sure a frame comes then even if nothing else happens.
+    pub(crate) fn check_for_updates_regularly(&mut self) {
+        if !self.settings.updates.check_automatically {
+            return;
+        }
+        let now = now_secs();
+        let last = self.settings.updates.last_checked;
+        if due(last, now, CHECK_EVERY) {
+            self.check_for_updates(false);
+        } else if let Some(last) = last {
+            let wait = (last + CHECK_EVERY - now).max(1) as u64;
+            self.ctx
+                .request_repaint_after(std::time::Duration::from_secs(wait));
         }
     }
 
@@ -307,5 +338,24 @@ pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
             )),
         },
         None => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checks_come_when_due() {
+        let now = 1_800_000_000;
+        assert!(due(None, now, RECHECK_AFTER));
+        // Restarting minutes later doesn't check again.
+        assert!(!due(Some(now - 5 * 60), now, RECHECK_AFTER));
+        assert!(due(Some(now - 20 * 60), now, RECHECK_AFTER));
+        // While running, every few hours.
+        assert!(!due(Some(now - 60 * 60), now, CHECK_EVERY));
+        assert!(due(Some(now - 5 * 60 * 60), now, CHECK_EVERY));
+        // A clock turned back doesn't stop checks.
+        assert!(due(Some(now + 3600), now, CHECK_EVERY));
     }
 }

@@ -1125,6 +1125,7 @@ impl eframe::App for ExploristApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.update_tray(&ctx);
+        self.check_for_updates_regularly();
         let palette = self.current_palette(&ctx);
         if palette != self.palette || ctx.cumulative_frame_nr() == 0 {
             self.palette = palette;
@@ -1214,6 +1215,8 @@ impl ExploristApp {
             .as_ref()
             .is_some_and(instance::Listener::take_show);
         if clicked || reopened {
+            // Like starting Explorist: see if there's an update.
+            self.maybe_check_for_updates();
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);

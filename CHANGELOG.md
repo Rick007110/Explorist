@@ -4,6 +4,11 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
+## Unreleased
+
+### Changed
+- **Update checks happen more often**: Explorist looks for a new version every time it starts (unless it checked in the last 15 minutes), when you bring it back from the tray, and every 4 hours while it keeps running, instead of once a day.
+
 ## 0.3.3
 
 ### New
