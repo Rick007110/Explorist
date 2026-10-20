@@ -117,12 +117,16 @@ fn load(path: &Path) -> Option<egui::ColorImage> {
             pixmap.data(),
         ));
     }
-    let image = image::ImageReader::open(path)
+    let reader = image::ImageReader::open(path)
         .ok()?
         .with_guessed_format()
-        .ok()?
-        .decode()
         .ok()?;
+    let image = if reader.format() == Some(image::ImageFormat::Ico) {
+        let data = std::fs::read(path).ok()?;
+        ico_png(&data).or_else(|| image::load_from_memory(&data).ok())?
+    } else {
+        reader.decode().ok()?
+    };
     let image = if image.width() > PIXELS || image.height() > PIXELS {
         image.thumbnail(PIXELS, PIXELS)
     } else {
@@ -133,6 +137,32 @@ fn load(path: &Path) -> Option<egui::ColorImage> {
         [rgba.width() as usize, rgba.height() as usize],
         rgba.as_raw(),
     ))
+}
+
+/// The biggest picture in an .ico file, when it's stored as a PNG. The
+/// image crate only takes RGBA PNGs there, but Windows takes any, and
+/// many icons keep their 256 px size as an RGB or palette PNG.
+fn ico_png(data: &[u8]) -> Option<image::DynamicImage> {
+    let u16_at = |at: usize| Some(u16::from_le_bytes(data.get(at..at + 2)?.try_into().ok()?));
+    let u32_at = |at: usize| Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?));
+    let count = u16_at(4)? as usize;
+    let side = |b: u8| if b == 0 { 256 } else { u32::from(b) };
+    let (_, start, len) = (0..count)
+        .filter_map(|i| {
+            let entry = 6 + 16 * i;
+            let area = side(*data.get(entry)?) * side(*data.get(entry + 1)?);
+            Some((
+                area,
+                u32_at(entry + 12)? as usize,
+                u32_at(entry + 8)? as usize,
+            ))
+        })
+        .max_by_key(|(area, _, _)| *area)?;
+    let picture = data.get(start..start.checked_add(len)?)?;
+    if !picture.starts_with(b"\x89PNG") {
+        return None;
+    }
+    image::load_from_memory_with_format(picture, image::ImageFormat::Png).ok()
 }
 
 /// Loaded textures by file name; `None` when the file is gone or broken.
@@ -213,6 +243,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(load(&svg).unwrap().size, [128, 64]);
+    }
+
+    /// A 256 px RGB PNG and a 16 px RGBA PNG in one .ico, as many
+    /// Windows icons are made.
+    #[test]
+    fn icons_with_rgb_png_pictures_load() {
+        let png = |w: u32, rgba: bool| {
+            let mut out = std::io::Cursor::new(Vec::new());
+            let image = if rgba {
+                image::DynamicImage::ImageRgba8(image::RgbaImage::new(w, w))
+            } else {
+                image::DynamicImage::ImageRgb8(image::RgbImage::new(w, w))
+            };
+            image.write_to(&mut out, image::ImageFormat::Png).unwrap();
+            out.into_inner()
+        };
+        let pictures = [(16u8, png(16, true)), (0u8, png(256, false))];
+        let mut ico = vec![0, 0, 1, 0, pictures.len() as u8, 0];
+        let mut offset = 6 + 16 * pictures.len();
+        for (side, data) in &pictures {
+            ico.extend([*side, *side, 0, 0, 1, 0, 32, 0]);
+            ico.extend((data.len() as u32).to_le_bytes());
+            ico.extend((offset as u32).to_le_bytes());
+            offset += data.len();
+        }
+        for (_, data) in &pictures {
+            ico.extend(data);
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("app.ico");
+        std::fs::write(&file, ico).unwrap();
+        assert_eq!(load(&file).unwrap().size, [128, 128]);
     }
 
     #[test]
