@@ -70,7 +70,9 @@ impl ExploristApp {
     /// Each frame: check again once [`CHECK_EVERY`] has passed, and make
     /// sure a frame comes then even if nothing else happens.
     pub(crate) fn check_for_updates_regularly(&mut self) {
-        if !self.settings.updates.check_automatically {
+        // Not while one is downloading or waiting for a restart.
+        let busy = self.update.installing.is_some() || self.update.installed;
+        if !self.settings.updates.check_automatically || busy {
             return;
         }
         let now = now_secs();
