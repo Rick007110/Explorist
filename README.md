@@ -1,11 +1,32 @@
 # Explorist
 
-A fast, keyboard-friendly file manager for Windows, with Linux and macOS
-builds too, written in Rust with [egui](https://github.com/emilk/egui).
+A blazing-fast, keyboard-first file browser for **Windows, macOS and Linux**, with a
+Spotlight/Raycast-style search bar for your apps and files. Written in Rust with
+[egui](https://github.com/emilk/egui). Free and open source.
+
+## Highlights
+
+- **Quick search from anywhere** *(coming in the next release)*. Press **Alt Space**
+  (Option Space on macOS) in any app and a search box pops up over everything,
+  finding any app or file on your device as you type. Apps come first, with their
+  icons, matched by name or initials ("vsc" finds Visual Studio Code). **Enter**
+  starts the app or opens the file; **Ctrl Enter** (⌘ Enter) shows it in Explorist.
+- **Fast.** Explorist keeps the list of every file name on your device between runs,
+  so searching everywhere works as soon as it starts and takes a few milliseconds,
+  even with millions of files *(coming in the next release)*.
+- **Keyboard first.** Every action has a shortcut, most can be changed in Settings,
+  and the command palette (**Ctrl P**) reaches everything else.
+- **A complete file manager.** Tabs, list and grid views with thumbnails, Quick Look,
+  a preview panel, inline and batch rename, undo, background copy and move with
+  progress, drag and drop, git status, Properties and Open with.
+- **Keeps itself up to date.** New versions install from inside the app.
+
+Explorist is updated often and ideas are welcome:
+[open an issue](https://github.com/Rick007110/Explorist/issues).
 
 ## Installing
 
-Download from the latest release:
+Download from the [latest release](https://github.com/Rick007110/Explorist/releases/latest):
 
 - **Windows:** `explorist-<version>-windows-x86_64-setup.exe`. It installs
   for your user only (no administrator prompt) and adds Explorist to the
@@ -27,11 +48,10 @@ downloads.
 
 ## Status
 
-Early development, Windows first. Working: browsing with tabs, sorting
-(per-folder), filtering, inline and batch rename, cut/copy/paste through the
-Windows clipboard, Recycle Bin and undo, background copy/move with progress,
-auto-refresh, a grid view with thumbnails, a preview panel, drag and drop (also out to other apps on Windows and macOS), Properties, Open with, a command palette, git status, a Settings page
-with rebindable shortcuts, and update checks.
+Early development, updated often. Explorist runs on Windows, macOS and Linux;
+Windows gets the most testing. A few things differ by system: on Windows, cut, copy
+and paste share the system clipboard with Explorer, while on macOS and Linux they work
+within Explorist; dragging files out into other apps works on Windows and macOS.
 
 ## Keyboard shortcuts
 
@@ -68,7 +88,8 @@ with rebindable shortcuts, and update checks.
 | Select with a box | Drag across empty space (Ctrl adds to the selection) |
 | Move / copy by dragging | Drag onto a folder or sidebar place (hold Ctrl, or Option on macOS, to copy) |
 
-Most shortcuts can be changed in Settings → Keyboard.
+Most shortcuts can be changed in Settings → Keyboard. On macOS, use ⌘ where it
+says Ctrl and Option where it says Alt.
 
 ## Building
 
@@ -78,7 +99,9 @@ cargo run -- D:\some\folder   # start in a folder
 cargo build --release
 ```
 
-Settings are saved to `%APPDATA%\Explorist\settings.toml`.
+Settings are saved to `settings.toml` in `%APPDATA%\Explorist` on Windows,
+`~/Library/Application Support/Explorist` on macOS and `~/.config/Explorist` on
+Linux.
 
 ## Releasing
 
