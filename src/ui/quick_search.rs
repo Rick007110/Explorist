@@ -42,12 +42,13 @@ const APPS: usize = 5;
 const APPS_MAX_AGE: Duration = Duration::from_secs(120);
 const ROW: f32 = 46.0;
 
-/// Started with `--search` and nothing was running to hand it to.
-static OPEN_AT_START: AtomicBool = AtomicBool::new(false);
+/// Asked for from outside a frame: `--search` (handed over, or nothing
+/// was running to hand it to), or the tray menu.
+static OPEN_SOON: AtomicBool = AtomicBool::new(false);
 
-/// Opens the box once Explorist has started.
-pub fn open_at_start() {
-    OPEN_AT_START.store(true, Ordering::Relaxed);
+/// Opens the box on the next frame, or once Explorist has started.
+pub fn open_soon() {
+    OPEN_SOON.store(true, Ordering::Relaxed);
 }
 
 fn viewport() -> ViewportId {
@@ -101,6 +102,14 @@ enum RowKind {
 }
 
 impl Row {
+    /// What the row stands for, to find it again among new results.
+    fn identity(&self) -> String {
+        match &self.kind {
+            RowKind::App(app) => format!("app:{}", app.target),
+            RowKind::Path { path, .. } => format!("path:{}", path.display()),
+        }
+    }
+
     fn name(&self) -> String {
         match &self.kind {
             RowKind::App(app) => app.name.clone(),
@@ -161,7 +170,7 @@ impl ExploristApp {
                 self.open_quick_search(ctx);
             }
         }
-        if enabled && OPEN_AT_START.swap(false, Ordering::Relaxed) {
+        if enabled && OPEN_SOON.swap(false, Ordering::Relaxed) {
             self.open_quick_search(ctx);
         }
 
@@ -186,6 +195,9 @@ impl ExploristApp {
                 .and_then(|v| v.visible())
                 .unwrap_or(true)
         });
+        // Showing something in the window brings Explorist forward, so the
+        // keyboard shouldn't be handed back to another app after it.
+        let revealing = requests.iter().any(|r| matches!(r, Request::Reveal(..)));
         for request in requests {
             match request {
                 Request::Reveal(path, is_dir) => {
@@ -202,7 +214,7 @@ impl ExploristApp {
                     }
                 }
                 // Give the keyboard back to the app that had it.
-                Request::Closed if !main_shown => crate::app::tray::hide_app(),
+                Request::Closed if !main_shown && !revealing => crate::app::tray::hide_app(),
                 Request::Closed => {}
             }
         }
@@ -214,7 +226,9 @@ impl ExploristApp {
     /// Runs on shown frames: keeps the box's window in existence (hidden
     /// until the shortcut is pressed), which only a shown frame can do.
     pub(crate) fn quick_search_ui(&mut self, ctx: &egui::Context) {
-        if !self.settings.quick_search {
+        // Only the first Explorist gets the shortcut and `--search`, so
+        // other copies (Open in new window) don't need a box.
+        if !self.settings.quick_search || !self.is_first_instance() {
             self.quick.builder = None;
             return;
         }
@@ -727,6 +741,17 @@ fn search(shared: &mut Shared) {
     if shared.searched.as_ref() == Some(&key) {
         return;
     }
+    // When only the list changed (it's still filling in, or a fresh one
+    // replaced it), keep the same item picked, not the same position.
+    let same_query = shared
+        .searched
+        .as_ref()
+        .is_some_and(|(q, _)| *q == shared.query);
+    let picked = shared
+        .results
+        .get(shared.selected)
+        .filter(|_| same_query)
+        .map(Row::identity);
     let query = shared.query.trim();
     shared.results =
         if query.is_empty() {
@@ -762,6 +787,13 @@ fn search(shared: &mut Shared) {
             }
             rows
         };
+    if let Some(picked) = picked {
+        shared.selected = shared
+            .results
+            .iter()
+            .position(|r| r.identity() == picked)
+            .unwrap_or(0);
+    }
     shared.searched = Some(key);
 }
 
@@ -947,6 +979,29 @@ fn row_ui(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Results changing under the same query (the list filling in or being
+    /// replaced) keep the same item picked; a new query starts at the top.
+    #[test]
+    fn the_picked_result_stays_when_the_list_changes() {
+        let paths = |names: &[&str]| -> Vec<PathBuf> { names.iter().map(PathBuf::from).collect() };
+        let mut shared = Shared {
+            recent: paths(&["/a", "/b", "/c"]),
+            ..Default::default()
+        };
+        search(&mut shared);
+        shared.selected = 2;
+        shared.recent = paths(&["/c", "/a", "/b"]);
+        shared.apps_serial += 1;
+        search(&mut shared);
+        assert_eq!(shared.results[shared.selected].identity(), "path:/c");
+
+        // Gone from the new results: back to the top.
+        shared.recent = paths(&["/a", "/b"]);
+        shared.apps_serial += 1;
+        search(&mut shared);
+        assert_eq!(shared.selected, 0);
+    }
 
     #[test]
     fn shortcuts_from_settings_text() {

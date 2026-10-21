@@ -21,7 +21,7 @@ fn main() -> eframe::Result {
             if explorist::app::instance::hand_off(explorist::app::instance::Ask::Search) {
                 return Ok(());
             }
-            explorist::ui::quick_search::open_at_start();
+            explorist::ui::quick_search::open_soon();
         }
         _ => {}
     }

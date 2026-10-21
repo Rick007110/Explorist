@@ -612,6 +612,12 @@ impl ExploristApp {
     /// Turns key presses into commands. Runs before the UI is drawn so
     /// shortcuts win over widgets that would otherwise react to the keys.
     fn handle_keys(&mut self, ctx: &egui::Context) {
+        // Recording a shortcut ends when Settings isn't showing, or the next
+        // keys pressed anywhere would become the shortcut.
+        if !self.view.settings_open {
+            self.view.settings.recording = None;
+            self.view.settings.recording_quick = false;
+        }
         // The mouse's back and forward buttons.
         let (back, forward) = ctx.input(|i| {
             (
@@ -1329,7 +1335,7 @@ impl ExploristApp {
         if let Some(listener) = &self.instance {
             listener.set_accepting(self.tray.is_some(), self.settings.quick_search);
             if listener.take_search() {
-                crate::ui::quick_search::open_at_start();
+                crate::ui::quick_search::open_soon();
             }
         }
 
@@ -1345,6 +1351,15 @@ impl ExploristApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             tray::set_dock_icon(true);
+        }
+        if let Some(tray) = &self.tray {
+            tray.show_search(
+                self.settings.quick_search,
+                &crate::ui::quick_search::display_keys(&self.settings.quick_search_keys),
+            );
+            if tray.take_search() && self.settings.quick_search {
+                crate::ui::quick_search::open_soon();
+            }
         }
         if self.tray.as_ref().is_some_and(tray::Tray::take_quit) {
             self.quit(ctx);

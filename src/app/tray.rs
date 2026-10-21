@@ -9,12 +9,18 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 const OPEN: &str = "open";
+const SEARCH: &str = "search";
 const QUIT: &str = "quit";
 
 pub struct Tray {
     _icon: TrayIcon,
     show: Arc<AtomicBool>,
+    search: Arc<AtomicBool>,
     quit: Arc<AtomicBool>,
+    /// "Quick search", greyed out while it's turned off.
+    search_item: MenuItem,
+    /// What the item shows now: on, and its keys.
+    search_shown: std::cell::RefCell<(bool, String)>,
 }
 
 impl Tray {
@@ -24,8 +30,10 @@ impl Tray {
             return None;
         }
         let menu = Menu::new();
+        let search_item = MenuItem::with_id(SEARCH, "Quick search", false, None);
         menu.append_items(&[
             &MenuItem::with_id(OPEN, "Open Explorist", true, None),
+            &search_item,
             &PredefinedMenuItem::separator(),
             &MenuItem::with_id(QUIT, "Quit Explorist", true, None),
         ])
@@ -39,6 +47,7 @@ impl Tray {
             .ok()?;
 
         let show = Arc::new(AtomicBool::new(false));
+        let search = Arc::new(AtomicBool::new(false));
         let quit = Arc::new(AtomicBool::new(false));
         {
             let (show, ctx) = (Arc::clone(&show), ctx.clone());
@@ -61,10 +70,16 @@ impl Tray {
             }));
         }
         {
-            let (show, quit, ctx) = (Arc::clone(&show), Arc::clone(&quit), ctx.clone());
+            let (show, search, quit, ctx) = (
+                Arc::clone(&show),
+                Arc::clone(&search),
+                Arc::clone(&quit),
+                ctx.clone(),
+            );
             MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
                 match event.id.as_ref() {
                     OPEN => show.store(true, Ordering::Relaxed),
+                    SEARCH => search.store(true, Ordering::Relaxed),
                     QUIT => quit.store(true, Ordering::Relaxed),
                     _ => return,
                 }
@@ -74,8 +89,32 @@ impl Tray {
         Some(Self {
             _icon: icon,
             show,
+            search,
             quit,
+            search_item,
+            search_shown: Default::default(),
         })
+    }
+
+    /// Keeps "Quick search" in step with the settings: greyed out when
+    /// it's off, with its keys when on.
+    pub fn show_search(&self, on: bool, keys: &str) {
+        let mut shown = self.search_shown.borrow_mut();
+        if shown.0 == on && shown.1 == keys {
+            return;
+        }
+        *shown = (on, keys.to_owned());
+        self.search_item.set_enabled(on);
+        self.search_item.set_text(if on {
+            format!("Quick search ({keys})")
+        } else {
+            "Quick search".to_owned()
+        });
+    }
+
+    /// "Quick search" was clicked since the last call.
+    pub fn take_search(&self) -> bool {
+        self.search.swap(false, Ordering::Relaxed)
     }
 
     /// The icon or "Open Explorist" was clicked since the last call.

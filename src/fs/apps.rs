@@ -20,6 +20,8 @@ pub struct App {
     /// The file behind it, to show in Explorist, if there is one.
     pub file: Option<PathBuf>,
     pub icon: Icon,
+    /// Runs in a terminal window (Linux).
+    pub terminal: bool,
 }
 
 /// Where an app's icon comes from.
@@ -128,12 +130,31 @@ fn score(name: &str, terms: &[String], whole: &str) -> Option<(i32, Ranges)> {
     (next == wanted.len()).then_some((500 - penalty, ranges))
 }
 
-/// A desktop entry's name, command and icon, if it's an app menus show.
+/// What quick search needs from a desktop entry.
 #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
-fn desktop_entry(text: &str) -> Option<(String, String, Option<String>)> {
+#[derive(Debug, PartialEq, Eq)]
+struct Entry {
+    name: String,
+    exec: String,
+    icon: Option<String>,
+    /// Runs in a terminal (htop and the like).
+    terminal: bool,
+}
+
+/// A desktop entry, if it's an app the menus of `desktops` (from
+/// `XDG_CURRENT_DESKTOP`, like ["GNOME"]) show.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn desktop_entry(text: &str, desktops: &[String]) -> Option<Entry> {
     let mut in_entry = false;
     let (mut name, mut exec, mut icon) = (None, None, None);
-    let mut app = false;
+    let (mut app, mut terminal) = (false, false);
+    let listed = |value: &str| {
+        value.split(';').any(|d| {
+            desktops
+                .iter()
+                .any(|ours| ours.eq_ignore_ascii_case(d.trim()))
+        })
+    };
     for line in text.lines() {
         let line = line.trim();
         if line.starts_with('[') {
@@ -146,17 +167,27 @@ fn desktop_entry(text: &str) -> Option<(String, String, Option<String>)> {
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
+        let value = value.trim();
         match key.trim() {
-            "Name" => name = Some(value.trim().to_owned()),
-            "Exec" => exec = Some(value.trim().to_owned()),
-            "Icon" => icon = Some(value.trim().to_owned()),
-            "Type" => app = value.trim() == "Application",
-            "NoDisplay" | "Hidden" if value.trim() == "true" => return None,
+            "Name" => name = Some(value.to_owned()),
+            "Exec" => exec = Some(value.to_owned()),
+            "Icon" => icon = Some(value.to_owned()),
+            "Type" => app = value == "Application",
+            "Terminal" => terminal = value == "true",
+            "NoDisplay" | "Hidden" if value == "true" => return None,
+            // Meant for other desktops only, or not for this one.
+            "OnlyShowIn" if !desktops.is_empty() && !listed(value) => return None,
+            "NotShowIn" if listed(value) => return None,
             _ => {}
         }
     }
     app.then_some(())?;
-    Some((name?, exec?, icon.filter(|i| !i.is_empty())))
+    Some(Entry {
+        name: name?,
+        exec: exec?,
+        icon: icon.filter(|i| !i.is_empty()),
+        terminal,
+    })
 }
 
 /// A desktop entry's `Exec` line as a program and its arguments, without
@@ -304,6 +335,7 @@ mod platform {
                         name,
                         target: id,
                         file,
+                        terminal: false,
                     });
                 }
                 ((*vtbl).release)(item);
@@ -374,6 +406,7 @@ mod platform {
                     target: path.to_string_lossy().into_owned(),
                     file: Some(path.clone()),
                     icon: Icon::Bundle(path),
+                    terminal: false,
                 });
             } else if depth == 0 && item.file_type().is_ok_and(|t| t.is_dir()) {
                 collect(&path, depth + 1, apps);
@@ -413,6 +446,12 @@ mod platform {
     }
 
     pub fn list() -> Vec<App> {
+        let desktops: Vec<String> = std::env::var("XDG_CURRENT_DESKTOP")
+            .unwrap_or_default()
+            .split(':')
+            .filter(|d| !d.is_empty())
+            .map(str::to_owned)
+            .collect();
         let mut apps = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for dir in entry_dirs() {
@@ -431,16 +470,18 @@ mod platform {
                 let Ok(text) = std::fs::read_to_string(&path) else {
                     continue;
                 };
-                let Some((name, exec, icon)) = desktop_entry(&text) else {
+                let Some(entry) = desktop_entry(&text, &desktops) else {
                     continue;
                 };
                 apps.push(App {
-                    name,
-                    target: exec,
-                    icon: icon
+                    name: entry.name,
+                    target: entry.exec,
+                    icon: entry
+                        .icon
                         .and_then(|i| find_icon(&i))
                         .map_or(Icon::None, Icon::File),
                     file: Some(path),
+                    terminal: entry.terminal,
                 });
             }
         }
@@ -484,16 +525,46 @@ mod platform {
 
     pub fn launch(app: &App) -> io::Result<()> {
         let args = exec_args(&app.target);
-        let (program, rest) = args
-            .split_first()
-            .ok_or_else(|| io::Error::other("the app has no command"))?;
+        if args.is_empty() {
+            return Err(io::Error::other("the app has no command"));
+        }
+        if app.terminal {
+            return in_terminal(&args);
+        }
+        spawn(&args[0], &args[1..])
+    }
+
+    fn spawn(program: &str, args: &[String]) -> io::Result<()> {
         std::process::Command::new(program)
-            .args(rest)
+            .args(args)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
             .map(drop)
+    }
+
+    /// Runs a terminal app in the desktop's terminal, trying the common
+    /// ones; each has its own way of being given a command.
+    fn in_terminal(command: &[String]) -> io::Result<()> {
+        let terminals: [(&str, &str); 5] = [
+            ("x-terminal-emulator", "-e"),
+            ("gnome-terminal", "--"),
+            ("konsole", "-e"),
+            ("xfce4-terminal", "-x"),
+            ("xterm", "-e"),
+        ];
+        let mut last = io::Error::from(io::ErrorKind::NotFound);
+        for (terminal, flag) in terminals {
+            let args: Vec<String> = std::iter::once(flag.to_owned())
+                .chain(command.iter().cloned())
+                .collect();
+            match spawn(terminal, &args) {
+                Ok(()) => return Ok(()),
+                Err(err) => last = err,
+            }
+        }
+        Err(last)
     }
 }
 
@@ -507,6 +578,7 @@ mod tests {
             target: String::new(),
             file: None,
             icon: Icon::None,
+            terminal: false,
         }
     }
 
@@ -540,21 +612,31 @@ mod tests {
 
     #[test]
     fn desktop_entries_are_read() {
-        let entry = "[Desktop Entry]\nType=Application\nName=Text Editor\nName[de]=Texteditor\nExec=gnome-text-editor %U\nIcon=org.gnome.TextEditor\n\n[Desktop Action new]\nName=New Window\nExec=gnome-text-editor --new-window\n";
+        let gnome = ["GNOME".to_owned()];
+        let text = "[Desktop Entry]\nType=Application\nName=Text Editor\nName[de]=Texteditor\nExec=gnome-text-editor %U\nIcon=org.gnome.TextEditor\n\n[Desktop Action new]\nName=New Window\nExec=gnome-text-editor --new-window\n";
         assert_eq!(
-            desktop_entry(entry),
-            Some((
-                "Text Editor".to_owned(),
-                "gnome-text-editor %U".to_owned(),
-                Some("org.gnome.TextEditor".to_owned())
-            ))
+            desktop_entry(text, &gnome),
+            Some(Entry {
+                name: "Text Editor".to_owned(),
+                exec: "gnome-text-editor %U".to_owned(),
+                icon: Some("org.gnome.TextEditor".to_owned()),
+                terminal: false,
+            })
         );
+        let entry = |extra: &str| {
+            desktop_entry(
+                &format!("[Desktop Entry]\nType=Application\nName=X\nExec=x\n{extra}\n"),
+                &gnome,
+            )
+        };
+        assert_eq!(entry("NoDisplay=true"), None);
+        assert!(entry("Terminal=true").is_some_and(|e| e.terminal));
+        // Other desktops' own tools stay out.
+        assert_eq!(entry("OnlyShowIn=KDE;"), None);
+        assert!(entry("OnlyShowIn=GNOME;Unity;").is_some());
+        assert_eq!(entry("NotShowIn=GNOME;"), None);
         assert_eq!(
-            desktop_entry("[Desktop Entry]\nType=Application\nName=X\nExec=x\nNoDisplay=true\n"),
-            None
-        );
-        assert_eq!(
-            desktop_entry("[Desktop Entry]\nType=Link\nName=X\nExec=x\n"),
+            desktop_entry("[Desktop Entry]\nType=Link\nName=X\nExec=x\n", &gnome),
             None
         );
         assert_eq!(
