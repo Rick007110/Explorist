@@ -20,6 +20,10 @@ open = "5"
 regex = "1"
 resvg = { version = "0.48", default-features = false }
 rfd = "0.17"
+# The quick search shortcut, which works while other apps have focus.
+global-hotkey = "0.9"
+# Fast byte search for searching every file name on the device.
+memchr = "2"
 # The icon in the notification area / menu bar, for Close to tray. On Linux
 # it speaks D-Bus (StatusNotifierItem) itself, with no GTK.
 tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }

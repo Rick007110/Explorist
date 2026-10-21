@@ -138,7 +138,7 @@ fn results(app: &mut ExploristApp) -> Vec<Item> {
         ));
     }
     let index: Option<&NameIndex> = if everywhere {
-        app.device_index.as_ref().map(|(_, i)| i)
+        app.device_index.as_ref().map(|(_, i)| &**i)
     } else {
         state.index.as_ref()
     };
@@ -813,7 +813,7 @@ fn row_ui(ui: &mut egui::Ui, p: &Palette, item: &Item, selected: bool) -> bool {
 
 /// `text` in `font`, shortened from the start with "…" to fit `max_width`:
 /// "…/photos/2024" rather than "/home/rick/pho…".
-fn tail_truncated(
+pub(crate) fn tail_truncated(
     ui: &egui::Ui,
     text: &str,
     font: egui::FontId,

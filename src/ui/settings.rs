@@ -64,6 +64,8 @@ pub struct SettingsState {
     pub recording: Option<Command>,
     /// "Reset all settings" was clicked once; a second click confirms.
     pub confirm_reset: Option<std::time::Instant>,
+    /// Waiting for the keys of the quick search shortcut.
+    pub recording_quick: bool,
     /// Space taken by saved thumbnails, once counted.
     pub thumbnails: Option<std::sync::Arc<std::sync::Mutex<Option<u64>>>>,
     /// The app being added under Integrations.
@@ -307,6 +309,10 @@ fn section_rows(section: Section) -> Vec<(&'static str, &'static str)> {
                 "Checks for a new version every time Explorist starts and every 4 hours while it runs.",
             ),
             (
+                "Quick search",
+                "A shortcut that works in any app and opens a box over everything for finding any file on this device. Explorist keeps a list of every file name, so results come as you type.",
+            ),
+            (
                 "Close to tray",
                 "Closing the window keeps Explorist running in the tray (the menu bar on macOS), so it opens instantly. Quit from its icon. Off: closing quits.",
             ),
@@ -494,8 +500,64 @@ fn general(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mut
             );
         });
     });
-    let unavailable = app.tray_unavailable;
+    let recording = app.view.settings.recording_quick;
+    let error = app.quick.error.clone();
+    let mut record = None;
     row(ui, &query, p, rows[4].0, rows[4].1, |ui| {
+        widgets::switch(ui, p, &mut s.quick_search);
+        if !s.quick_search {
+            return;
+        }
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            if recording {
+                ui.label(
+                    egui::RichText::new("Press the new keys…")
+                        .font(text::body())
+                        .color(p.accent),
+                );
+            } else {
+                widgets::kbd(
+                    ui,
+                    p,
+                    &crate::ui::quick_search::display_keys(&s.quick_search_keys),
+                );
+            }
+            let label = if recording { "Cancel" } else { "Change" };
+            if widgets::button(ui, p, label, ButtonStyle::Secondary, None).clicked() {
+                record = Some(!recording);
+            }
+        });
+        let note = |text: String, color| {
+            egui::Label::new(
+                egui::RichText::new(text)
+                    .font(crate::ui::fonts::regular(12.0))
+                    .color(color),
+            )
+            .wrap()
+        };
+        if let Some(error) = &error {
+            ui.add(note(error.clone(), p.error));
+        } else if crate::ui::quick_search::wayland() {
+            ui.add(note(
+                "On Wayland only the desktop can set shortcuts that work in any app. Add one in your desktop's keyboard settings that runs: explorist --search".to_owned(),
+                p.muted,
+            ));
+        } else {
+            ui.add(note(
+                format!(
+                    "Press {} in any app while Explorist is running. With Close to tray on, it always is.",
+                    crate::ui::quick_search::display_keys(&s.quick_search_keys)
+                ),
+                p.muted,
+            ));
+        }
+    });
+    if let Some(on) = record {
+        app.view.settings.recording_quick = on;
+    }
+    let unavailable = app.tray_unavailable;
+    row(ui, &query, p, rows[5].0, rows[5].1, |ui| {
         widgets::switch(ui, p, &mut s.close_to_tray);
         if unavailable && s.close_to_tray {
             ui.add(

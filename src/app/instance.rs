@@ -42,30 +42,53 @@ fn connect() -> Option<BufReader<TcpStream>> {
     (hello.trim() == HELLO).then_some(stream)
 }
 
-/// The line asking for the window. It names the version, so a copy that
-/// was just updated doesn't hand over to the old one.
-fn request() -> String {
-    format!("show {CURRENT}")
+/// What a later copy asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ask {
+    /// Show the window (Explorist opened again).
+    Show,
+    /// Open the quick search box (`explorist --search`).
+    Search,
 }
 
-/// Asks a running Explorist to show its window. True when it did, so
-/// this one can quit.
-pub fn hand_off() -> bool {
+impl Ask {
+    /// The line asking for it. It names the version, so a copy that was
+    /// just updated doesn't hand over to the old one.
+    fn line(self) -> String {
+        let word = match self {
+            Self::Show => "show",
+            Self::Search => "search",
+        };
+        format!("{word} {CURRENT}")
+    }
+}
+
+/// Asks a running Explorist for `ask`. True when it agreed, so this one
+/// can quit.
+pub fn hand_off(ask: Ask) -> bool {
     let Some(mut stream) = connect() else {
         return false;
     };
-    if writeln!(stream.get_mut(), "{}", request()).is_err() {
+    if writeln!(stream.get_mut(), "{}", ask.line()).is_err() {
         return false;
     }
     let mut reply = String::new();
     stream.read_line(&mut reply).is_ok() && reply.trim() == "ok"
 }
 
-/// Listens for later copies asking for the window.
-pub struct Listener {
+#[derive(Default)]
+struct Flags {
     /// Agree to show the window (Close to tray is on).
-    accept: Arc<AtomicBool>,
-    show: Arc<AtomicBool>,
+    accept_show: AtomicBool,
+    /// Agree to open the search box (quick search is on).
+    accept_search: AtomicBool,
+    show: AtomicBool,
+    search: AtomicBool,
+}
+
+/// Listens for later copies asking for the window or the search box.
+pub struct Listener {
+    flags: Arc<Flags>,
     port: u16,
 }
 
@@ -81,9 +104,8 @@ impl Listener {
         std::fs::create_dir_all(file.parent()?).ok()?;
         std::fs::write(&file, port.to_string()).ok()?;
 
-        let accept = Arc::new(AtomicBool::new(false));
-        let show = Arc::new(AtomicBool::new(false));
-        let (accepting, showing) = (Arc::clone(&accept), Arc::clone(&show));
+        let flags = Arc::new(Flags::default());
+        let shared = Arc::clone(&flags);
         std::thread::Builder::new()
             .name("explorist-instance".into())
             .spawn(move || {
@@ -96,25 +118,43 @@ impl Listener {
                     if BufReader::new(&stream).read_line(&mut line).is_err() {
                         continue;
                     }
-                    let yes = line.trim() == request() && accepting.load(Ordering::Relaxed);
-                    if yes {
-                        showing.store(true, Ordering::Relaxed);
-                        ctx.request_repaint();
-                    }
+                    let line = line.trim();
+                    let asked = if line == Ask::Show.line() {
+                        Some((&shared.accept_show, &shared.show))
+                    } else if line == Ask::Search.line() {
+                        Some((&shared.accept_search, &shared.search))
+                    } else {
+                        None
+                    };
+                    let yes = asked.is_some_and(|(accept, flag)| {
+                        let yes = accept.load(Ordering::Relaxed);
+                        if yes {
+                            flag.store(true, Ordering::Relaxed);
+                            ctx.request_repaint();
+                        }
+                        yes
+                    });
                     let _ = writeln!(&stream, "{}", if yes { "ok" } else { "no" });
                 }
             })
             .ok()?;
-        Some(Self { accept, show, port })
+        Some(Self { flags, port })
     }
 
-    pub fn set_accepting(&self, on: bool) {
-        self.accept.store(on, Ordering::Relaxed);
+    /// What this copy agrees to do for later ones.
+    pub fn set_accepting(&self, show: bool, search: bool) {
+        self.flags.accept_show.store(show, Ordering::Relaxed);
+        self.flags.accept_search.store(search, Ordering::Relaxed);
     }
 
     /// Whether another copy asked for the window since the last call.
     pub fn take_show(&self) -> bool {
-        self.show.swap(false, Ordering::Relaxed)
+        self.flags.show.swap(false, Ordering::Relaxed)
+    }
+
+    /// Whether another copy asked for the search box since the last call.
+    pub fn take_search(&self) -> bool {
+        self.flags.search.swap(false, Ordering::Relaxed)
     }
 }
 

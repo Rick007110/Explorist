@@ -14,7 +14,8 @@
 
 use std::collections::{BinaryHeap, HashSet, VecDeque};
 use std::fs;
-use std::path::PathBuf;
+use std::io::{self, BufWriter, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread;
@@ -49,6 +50,9 @@ struct Node {
 struct Store {
     nodes: Vec<Node>,
     names: String,
+    /// `names` with ASCII letters lowercased: same length and offsets, so
+    /// a query can be found in all names at once with a fast byte search.
+    lower: String,
 }
 
 impl Store {
@@ -73,6 +77,8 @@ impl Store {
             is_dir,
         });
         self.names.push_str(name);
+        self.lower
+            .extend(name.chars().map(|c| c.to_ascii_lowercase()));
         Some(id)
     }
 
@@ -129,6 +135,13 @@ pub struct Hit {
 pub struct NameIndex {
     roots: Vec<PathBuf>,
     inner: Arc<Inner>,
+    /// Unique per list, so a new list never looks like an old one.
+    serial: u64,
+}
+
+fn next_serial() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl NameIndex {
@@ -176,7 +189,11 @@ impl NameIndex {
                 .spawn(move || work(&inner, &*wake))
                 .ok();
         }
-        Self { roots, inner }
+        Self {
+            roots,
+            inner,
+            serial: next_serial(),
+        }
     }
 
     pub fn roots(&self) -> &[PathBuf] {
@@ -196,9 +213,10 @@ impl NameIndex {
         self.len() == 0
     }
 
-    /// Changes whenever more items have been listed.
+    /// Changes whenever more items have been listed, and differs between
+    /// lists.
     pub fn generation(&self) -> u64 {
-        self.inner.generation.load(Ordering::Acquire)
+        (self.serial << 40) ^ self.inner.generation.load(Ordering::Acquire)
     }
 
     fn store(&self) -> std::sync::RwLockReadGuard<'_, Store> {
@@ -212,43 +230,12 @@ impl NameIndex {
             return Vec::new();
         }
         let store = self.store();
+        let best = if query.terms.iter().all(|t| t.is_ascii()) {
+            find_ascii(&store, &query, limit)
+        } else {
+            scan(&store, &query, limit)
+        };
         let nodes = &store.nodes;
-        let threads = thread::available_parallelism()
-            .map_or(4, |n| n.get())
-            .clamp(1, MAX_WORKERS);
-        let chunk = nodes.len().div_ceil(threads).max(1);
-        let mut best: Vec<(i32, u32)> = thread::scope(|scope| {
-            let handles: Vec<_> = nodes
-                .chunks(chunk)
-                .enumerate()
-                .map(|(c, part)| {
-                    let store = &*store;
-                    let query = &query;
-                    scope.spawn(move || {
-                        // Keeps the top `limit`: a min-heap of the best so far.
-                        let mut heap = BinaryHeap::with_capacity(limit + 1);
-                        for (i, node) in part.iter().enumerate() {
-                            if node.depth == 0 {
-                                continue;
-                            }
-                            if let Some(score) = query.score(store.name(node), node.depth) {
-                                heap.push(std::cmp::Reverse((score, (c * chunk + i) as u32)));
-                                if heap.len() > limit {
-                                    heap.pop();
-                                }
-                            }
-                        }
-                        heap.into_iter().map(|r| r.0).collect::<Vec<_>>()
-                    })
-                })
-                .collect();
-            handles
-                .into_iter()
-                .flat_map(|h| h.join().unwrap_or_default())
-                .collect()
-        });
-        best.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-        best.truncate(limit);
         best.into_iter()
             .map(|(score, id)| {
                 let node = &nodes[id as usize];
@@ -276,6 +263,254 @@ impl NameIndex {
                 }
             })
             .collect()
+    }
+}
+
+fn threads() -> usize {
+    thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .clamp(1, MAX_WORKERS)
+}
+
+/// The best results so far in one part of the search.
+struct Top {
+    /// A min-heap, so the worst kept result is on top.
+    heap: BinaryHeap<std::cmp::Reverse<(i32, u32)>>,
+    limit: usize,
+}
+
+impl Top {
+    fn keep(&mut self, score: i32, id: u32) {
+        self.heap.push(std::cmp::Reverse((score, id)));
+        if self.heap.len() > self.limit {
+            self.heap.pop();
+        }
+    }
+
+    /// The score a result must beat, once there are enough.
+    fn floor(&self) -> Option<i32> {
+        (self.heap.len() >= self.limit).then(|| self.heap.peek().map_or(i32::MIN, |r| r.0.0))
+    }
+}
+
+/// Keeps the best `limit` of what `each` finds in every part of the
+/// nodes, run on all cores: (score, node id), best first.
+fn best_in_parts(
+    nodes: &[Node],
+    limit: usize,
+    each: impl Fn(std::ops::Range<usize>, &mut Top) + Sync,
+) -> Vec<(i32, u32)> {
+    let chunk = nodes.len().div_ceil(threads()).max(1);
+    let mut best: Vec<(i32, u32)> = thread::scope(|scope| {
+        let handles: Vec<_> = (0..nodes.len())
+            .step_by(chunk)
+            .map(|start| {
+                let each = &each;
+                let range = start..(start + chunk).min(nodes.len());
+                scope.spawn(move || {
+                    let mut top = Top {
+                        heap: BinaryHeap::with_capacity(limit + 1),
+                        limit,
+                    };
+                    each(range, &mut top);
+                    top.heap.into_iter().map(|r| r.0).collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap_or_default())
+            .collect()
+    });
+    best.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    best.truncate(limit);
+    best
+}
+
+/// ASCII queries: finds the longest word in all the lowercased names with
+/// one fast byte search per part, and only looks closer at names it's in.
+fn find_ascii(store: &Store, query: &Query, limit: usize) -> Vec<(i32, u32)> {
+    let nodes = &store.nodes;
+    let lower = store.lower.as_bytes();
+    let lead = query
+        .terms
+        .iter()
+        .max_by_key(|t| t.len())
+        .expect("terms aren't empty");
+    let finder = memchr::memmem::Finder::new(lead.as_bytes());
+    best_in_parts(nodes, limit, |range, top| {
+        let Some(last) = range.clone().last() else {
+            return;
+        };
+        let start = nodes[range.start].name_start as usize;
+        let hay = &lower[start..end_of_node(&nodes[last])];
+        let mut pos = 0;
+        let mut id = range.start;
+        while let Some(found) = finder.find(&hay[pos..]) {
+            let at = start + pos + found;
+            // The name it's in: names are stored back to back, in order.
+            while end_of_node(&nodes[id]) <= at {
+                id += 1;
+            }
+            let node = &nodes[id];
+            let end = end_of_node(node);
+            if at + lead.len() <= end && node.depth != 0 {
+                let name = &store.lower[node.name_start as usize..end];
+                let worth_it = top
+                    .floor()
+                    .is_none_or(|floor| query.best_rank(name, node.depth) >= floor);
+                if worth_it
+                    && query.terms.iter().all(|t| {
+                        t == lead || memchr::memmem::find(name.as_bytes(), t.as_bytes()).is_some()
+                    })
+                {
+                    top.keep(query.rank(name, node.depth), id as u32);
+                }
+            }
+            // On to the next name.
+            pos = end - start;
+            if pos >= hay.len() {
+                break;
+            }
+        }
+    })
+}
+
+fn end_of_node(node: &Node) -> usize {
+    node.name_start as usize + node.name_len as usize
+}
+
+/// Any query: looks at every name in turn.
+fn scan(store: &Store, query: &Query, limit: usize) -> Vec<(i32, u32)> {
+    best_in_parts(&store.nodes, limit, |range, top| {
+        for id in range {
+            let node = &store.nodes[id];
+            if node.depth == 0 {
+                continue;
+            }
+            if let Some(score) = query.score(store.name(node), node.depth) {
+                top.keep(score, id as u32);
+            }
+        }
+    })
+}
+
+/// Start of a saved list, with its format version.
+const SAVED_MAGIC: &[u8; 8] = b"EXPIDX01";
+
+impl NameIndex {
+    /// Saves the finished list, so the next start can search at once
+    /// (see [`Self::load`]).
+    pub fn save(&self, path: &Path) -> io::Result<()> {
+        if !self.is_done() {
+            return Err(io::Error::other("the list isn't finished"));
+        }
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+        {
+            let store = self.store();
+            let mut out = BufWriter::new(fs::File::create(&tmp)?);
+            out.write_all(SAVED_MAGIC)?;
+            out.write_all(&(self.roots.len() as u32).to_le_bytes())?;
+            for root in &self.roots {
+                let text = root.to_string_lossy();
+                out.write_all(&(text.len() as u32).to_le_bytes())?;
+                out.write_all(text.as_bytes())?;
+            }
+            out.write_all(&(store.nodes.len() as u64).to_le_bytes())?;
+            for node in &store.nodes {
+                out.write_all(&node.parent.to_le_bytes())?;
+                out.write_all(&node.name_start.to_le_bytes())?;
+                out.write_all(&node.name_len.to_le_bytes())?;
+                out.write_all(&node.depth.to_le_bytes())?;
+                out.write_all(&[u8::from(node.is_dir)])?;
+            }
+            out.write_all(&(store.names.len() as u64).to_le_bytes())?;
+            out.write_all(store.names.as_bytes())?;
+            out.flush()?;
+        }
+        fs::rename(&tmp, path)
+    }
+
+    /// A list saved by [`Self::save`], finished and ready to search. `None`
+    /// if it's missing or damaged.
+    pub fn load(path: &Path) -> Option<Self> {
+        let data = fs::read(path).ok()?;
+        let mut at = 0usize;
+        let mut take = |n: usize| -> Option<&[u8]> {
+            let part = data.get(at..at.checked_add(n)?)?;
+            at += n;
+            Some(part)
+        };
+        if take(8)? != SAVED_MAGIC {
+            return None;
+        }
+        let u32_of = |b: &[u8]| u32::from_le_bytes(b.try_into().unwrap_or_default());
+        let roots_len = u32_of(take(4)?) as usize;
+        let mut roots = Vec::with_capacity(roots_len.min(64));
+        for _ in 0..roots_len {
+            let len = u32_of(take(4)?) as usize;
+            roots.push(PathBuf::from(std::str::from_utf8(take(len)?).ok()?));
+        }
+        let count = u64::from_le_bytes(take(8)?.try_into().ok()?) as usize;
+        if count > MAX_ITEMS {
+            return None;
+        }
+        let mut nodes = Vec::with_capacity(count);
+        for _ in 0..count {
+            let b = take(13)?;
+            nodes.push(Node {
+                parent: u32_of(&b[0..4]),
+                name_start: u32_of(&b[4..8]),
+                name_len: u16::from_le_bytes([b[8], b[9]]),
+                depth: u16::from_le_bytes([b[10], b[11]]),
+                is_dir: b[12] != 0,
+            });
+        }
+        let names_len = u64::from_le_bytes(take(8)?.try_into().ok()?) as usize;
+        let names = std::str::from_utf8(take(names_len)?).ok()?.to_owned();
+        // Check every record, so a damaged file can't point outside the
+        // names or make a loop of parents.
+        for (id, node) in nodes.iter().enumerate() {
+            let start = node.name_start as usize;
+            let end = start + node.name_len as usize;
+            let parent_ok = if node.parent == NO_PARENT {
+                node.depth == 0
+            } else {
+                (node.parent as usize) < id
+            };
+            if end > names.len()
+                || !names.is_char_boundary(start)
+                || !names.is_char_boundary(end)
+                || !parent_ok
+            {
+                return None;
+            }
+        }
+        let inner = Arc::new(Inner {
+            store: RwLock::new(Store {
+                nodes,
+                lower: names.to_ascii_lowercase(),
+                names,
+            }),
+            walk: Mutex::new(Walk {
+                queue: VecDeque::new(),
+                busy: 0,
+                stop: true,
+            }),
+            ready: Condvar::new(),
+            stopped: AtomicBool::new(true),
+            done: AtomicBool::new(true),
+            generation: AtomicU64::new(1),
+            skip_paths: HashSet::new(),
+        });
+        Some(Self {
+            roots,
+            inner,
+            serial: next_serial(),
+        })
     }
 }
 
@@ -401,21 +636,39 @@ impl Query {
 
     /// The score for `name`, or `None` if a word is missing.
     fn score(&self, name: &str, depth: u16) -> Option<i32> {
-        let lower_owned;
-        let lower: &str = if name.is_ascii() {
+        let lower = if name.is_ascii() {
             // Fast path: compare ASCII bytes without allocating.
             for term in &self.terms {
                 find_ascii_ci(name.as_bytes(), term.as_bytes())?;
             }
-            lower_owned = name.to_ascii_lowercase();
-            &lower_owned
+            name.to_ascii_lowercase()
         } else {
-            lower_owned = name.to_lowercase();
+            let lower = name.to_lowercase();
             for term in &self.terms {
-                lower_owned.find(term.as_str())?;
+                lower.find(term.as_str())?;
             }
-            &lower_owned
+            lower
         };
+        Some(self.rank(&lower, depth))
+    }
+
+    /// The most [`Self::rank`] could give `lower`, worked out cheaply, to
+    /// pass over names that can't make the results.
+    fn best_rank(&self, lower: &str, depth: u16) -> i32 {
+        let tier = if lower.starts_with(self.whole.as_str()) {
+            1000
+        } else if lower.starts_with(self.terms[0].as_str()) {
+            600
+        } else {
+            400
+        };
+        tier - i32::from(depth) * 3 - (lower.len() as i32 - self.whole.len() as i32).max(0) / 2
+    }
+
+    /// How good a match `lower` (a lowercased name with every word in it)
+    /// is: exact names first, then ones starting with the query, then ones
+    /// where it starts a word; shallower and shorter names break ties.
+    fn rank(&self, lower: &str, depth: u16) -> i32 {
         let first = &self.terms[0];
         let stem = lower.rsplit_once('.').map_or(lower, |(s, _)| s);
         let at = lower.find(first.as_str()).unwrap_or(0);
@@ -437,8 +690,8 @@ impl Query {
             200
         };
         score -= i32::from(depth) * 3;
-        score -= (name.len() as i32 - self.whole.len() as i32).max(0) / 2;
-        Some(score)
+        score -= (lower.len() as i32 - self.whole.len() as i32).max(0) / 2;
+        score
     }
 
     /// Char ranges of the first place each word appears in `name`.
@@ -604,5 +857,139 @@ mod tests {
                 hits.first().map(|h| &h.relative)
             );
         }
+    }
+
+    /// Search, save and load times for a made-up list the size of a busy
+    /// computer's. Run with `cargo test --release scale_bench --
+    /// --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn scale_bench() {
+        const ITEMS: usize = 2_000_000;
+        let words = [
+            "report", "photo", "invoice", "holiday", "project", "backup", "notes", "music",
+            "video", "draft", "final", "budget", "scan", "letter", "game", "config", "build",
+            "index", "data", "song",
+        ];
+        let exts = [
+            "txt", "jpg", "pdf", "mp4", "docx", "png", "rs", "json", "mp3", "zip",
+        ];
+        let mut store = Store::default();
+        store.push(NO_PARENT, 0, "/", true);
+        let mut folders = vec![0u32];
+        let mut seed = 7u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for i in 0..ITEMS {
+            let r = next();
+            let parent = folders[(r as usize >> 8) % folders.len()];
+            let depth = store.nodes[parent as usize].depth + 1;
+            let w1 = words[(r % 20) as usize];
+            let w2 = words[((r >> 5) % 20) as usize];
+            let is_dir = i % 12 == 0;
+            let name = if is_dir {
+                format!("{w1} {w2} {}", r % 1000)
+            } else {
+                format!(
+                    "{w1}_{w2}_{}.{}",
+                    r % 100_000,
+                    exts[((r >> 11) % 10) as usize]
+                )
+            };
+            if let Some(id) = store.push(parent, depth.min(30), &name, is_dir)
+                && is_dir
+            {
+                folders.push(id);
+            }
+        }
+        let inner = Arc::new(Inner {
+            store: RwLock::new(store),
+            walk: Mutex::new(Walk {
+                queue: VecDeque::new(),
+                busy: 0,
+                stop: true,
+            }),
+            ready: Condvar::new(),
+            stopped: AtomicBool::new(true),
+            done: AtomicBool::new(true),
+            generation: AtomicU64::new(1),
+            skip_paths: HashSet::new(),
+        });
+        let index = NameIndex {
+            roots: vec![PathBuf::from("/")],
+            inner,
+            serial: next_serial(),
+        };
+        println!("{} items", index.len());
+        for q in ["holiday", "invoice 4521", "zz", "final_budget", "p"] {
+            let start = Instant::now();
+            let hits = index.search(q, 60);
+            println!("{q:?}: {} hits in {:?}", hits.len(), start.elapsed());
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("index.bin");
+        let start = Instant::now();
+        index.save(&file).unwrap();
+        println!(
+            "saved {} MB in {:?}",
+            fs::metadata(&file).unwrap().len() / 1_000_000,
+            start.elapsed()
+        );
+        let start = Instant::now();
+        let loaded = NameIndex::load(&file).unwrap();
+        println!("loaded {} items in {:?}", loaded.len(), start.elapsed());
+    }
+
+    /// The fast byte search finds what looking at every name finds.
+    #[test]
+    fn fast_search_matches_the_full_scan() {
+        let dir = tree();
+        for name in ["Über Park.txt", "PARK-ing.MD", "aparkb", "pa rk", "x.park"] {
+            fs::write(dir.path().join(name), b"").unwrap();
+        }
+        let index = NameIndex::start(vec![dir.path().to_path_buf()], Vec::new(), || {});
+        wait(&index);
+        let store = index.store();
+        for q in ["park", "PARK", "pa", "rk ing", "a", "x.", "über", "zzz"] {
+            let query = Query::new(q);
+            if query.terms.iter().all(|t| t.is_ascii()) {
+                assert_eq!(
+                    find_ascii(&store, &query, 50),
+                    scan(&store, &query, 50),
+                    "query {q:?}"
+                );
+            }
+        }
+        drop(store);
+        assert_eq!(names(&index.search("über", 5)), ["Über Park.txt"]);
+    }
+
+    #[test]
+    fn saved_lists_load_and_search_the_same() {
+        let dir = tree();
+        let index = NameIndex::start(vec![dir.path().to_path_buf()], Vec::new(), || {});
+        wait(&index);
+        let file = tempfile::tempdir().unwrap();
+        let saved = file.path().join("index.bin");
+        index.save(&saved).unwrap();
+        let loaded = NameIndex::load(&saved).unwrap();
+        assert!(loaded.is_done());
+        assert_eq!(loaded.len(), index.len());
+        assert_eq!(loaded.roots(), index.roots());
+        assert_eq!(loaded.search("park", 10), index.search("park", 10));
+
+        // Damaged files are refused rather than trusted.
+        let mut data = fs::read(&saved).unwrap();
+        let cut = data.len() - 3;
+        data.truncate(cut);
+        fs::write(&saved, &data).unwrap();
+        assert!(NameIndex::load(&saved).is_none());
+        fs::write(&saved, b"EXPIDX01junk").unwrap();
+        assert!(NameIndex::load(&saved).is_none());
+        assert!(NameIndex::load(&file.path().join("missing")).is_none());
     }
 }

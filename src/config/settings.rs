@@ -55,6 +55,11 @@ pub struct Settings {
     pub custom_apps: Vec<CustomApp>,
     /// Closing the window keeps Explorist running in the tray.
     pub close_to_tray: bool,
+    /// A shortcut that works in any app and opens a box for searching
+    /// every file on the device.
+    pub quick_search: bool,
+    /// Its keys, like "Alt+Space".
+    pub quick_search_keys: String,
     /// Folders open in tabs when Explorist closed, and which was active.
     pub open_tabs: Vec<PathBuf>,
     pub active_tab: usize,
@@ -108,6 +113,8 @@ impl Default for Settings {
             integrations_off: BTreeSet::new(),
             custom_apps: Vec::new(),
             close_to_tray: true,
+            quick_search: true,
+            quick_search_keys: "Alt+Space".to_owned(),
             open_tabs: Vec::new(),
             active_tab: 0,
             git_status: true,
@@ -387,6 +394,8 @@ mod tests {
                 applies: crate::fs::integrations::Applies::Files,
             }],
             close_to_tray: false,
+            quick_search: false,
+            quick_search_keys: "Ctrl+Shift+F".to_owned(),
             open_tabs: vec![PathBuf::from("C:\\Users"), PathBuf::from("D:\\photos")],
             active_tab: 1,
             git_status: false,

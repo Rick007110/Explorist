@@ -4,6 +4,17 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
+## Unreleased
+
+### New
+- **Quick search**: press **Alt Space** (Option Space on macOS) in any app to pop up a search box over everything and find any file on this device as you type, like Spotlight or Raycast. **Enter** opens the file (or the folder in Explorist), **Ctrl Enter** (⌘ Enter) shows it in Explorist, **Ctrl Shift C** copies its path, **Esc** closes. With nothing typed, it lists your recent folders. Choose other keys or turn it off in Settings → General. It works while Explorist is running, which with Close to tray means always. On Linux with Wayland, where apps can't set up such shortcuts, add one in your desktop's keyboard settings that runs `explorist --search`.
+
+### Changed
+- **Searching everywhere is faster and ready at once**: the list of every file name on the device is saved between runs, so searches work right after Explorist starts, and it's refreshed in the background without the results going away meanwhile. Searching it is several times faster: a few milliseconds even with millions of files.
+
+### Fixed
+- Clicking the tray icon, or opening Explorist again, might not bring back the window hidden in the tray on Windows.
+
 ## 0.3.4
 
 ### New

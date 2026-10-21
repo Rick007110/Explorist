@@ -11,7 +11,18 @@ fn main() -> eframe::Result {
         }
         Some("--update-now") => std::process::exit(explorist::update::update_now()),
         // Opened again while it sits in the tray: show that window instead.
-        None if explorist::app::instance::hand_off() => return Ok(()),
+        None if explorist::app::instance::hand_off(explorist::app::instance::Ask::Show) => {
+            return Ok(());
+        }
+        // A desktop shortcut for quick search (where apps can't set one up
+        // themselves, like on Wayland): ask the running Explorist, or start
+        // with the box open.
+        Some("--search") => {
+            if explorist::app::instance::hand_off(explorist::app::instance::Ask::Search) {
+                return Ok(());
+            }
+            explorist::ui::quick_search::open_at_start();
+        }
         _ => {}
     }
     let viewport = egui::ViewportBuilder::default()

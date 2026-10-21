@@ -72,7 +72,14 @@ pub struct ExploristApp {
     pub(crate) folder_sizes: sizes::FolderSizes,
     /// Every name on the device, for searching Everywhere; built on first
     /// use and kept while Explorist runs.
-    pub(crate) device_index: Option<(Instant, crate::fs::index::NameIndex)>,
+    pub(crate) device_index: Option<(Instant, Arc<crate::fs::index::NameIndex>)>,
+    /// A fresh list being made to replace `device_index` when it's done,
+    /// so searches keep using the old one meanwhile.
+    device_index_next: Option<Arc<crate::fs::index::NameIndex>>,
+    /// The list saved last time, being read at startup.
+    device_index_loading: Option<std::sync::mpsc::Receiver<Option<crate::fs::index::NameIndex>>>,
+    /// `device_index` is finished but not saved yet.
+    device_index_unsaved: bool,
     /// Other apps for the right-click menu.
     pub(crate) integrations: integrations::Integrations,
     /// Listens for Explorist being opened again, if this is the first copy.
@@ -83,6 +90,8 @@ pub struct ExploristApp {
     pub(crate) tray_unavailable: bool,
     /// Closing really quits now (Quit in the tray menu, restarting to update).
     pub(crate) quitting: bool,
+    /// The search-anywhere shortcut and its box.
+    pub(crate) quick: crate::ui::quick_search::QuickSearch,
 }
 
 /// A background task's outcome, for a toast.
@@ -255,14 +264,19 @@ impl ExploristApp {
             drives_read: Instant::now(),
             folder_sizes: Default::default(),
             device_index: None,
+            device_index_next: None,
+            device_index_loading: None,
+            device_index_unsaved: false,
             integrations: integrations::Integrations::detect(),
             instance: instance::Listener::start(cc.egui_ctx.clone()),
             tray: None,
             tray_unavailable: false,
             quitting: false,
+            quick: Default::default(),
         };
         // Reopen the other tabs from last time.
-        if app.settings.start_in == StartIn::LastFolder && std::env::args_os().nth(1).is_none() {
+        let folder_given = std::env::args_os().nth(1).is_some_and(|a| a != "--search");
+        if app.settings.start_in == StartIn::LastFolder && !folder_given {
             let saved = app.settings.open_tabs.clone();
             let active = app.settings.active_tab;
             for (i, path) in saved.iter().enumerate() {
@@ -291,6 +305,14 @@ impl ExploristApp {
             }
         }
         app.check_for_updates_at_start();
+        // Quick search: have the device's list ready before it's needed.
+        if app.settings.quick_search && app.is_first_instance() {
+            if Self::device_index_file().is_some_and(|f| f.is_file()) {
+                app.load_saved_device_index();
+            } else {
+                app.ensure_device_index();
+            }
+        }
         if let LoadOutcome::Invalid { error, .. } = outcome {
             app.toast_error(format!(
                 "Settings couldn’t be read, so defaults are in use: {error}"
@@ -403,15 +425,95 @@ impl ExploristApp {
             .ok();
     }
 
-    /// Starts listing every name on the device, or again when the list is
-    /// old, for searching Everywhere.
-    pub(crate) fn ensure_device_index(&mut self) {
-        const MAX_AGE: Duration = Duration::from_secs(15 * 60);
-        if let Some((built, index)) = &self.device_index
-            && (!index.is_done() || built.elapsed() < MAX_AGE)
-        {
+    /// Where the device's list of names is saved between runs.
+    fn device_index_file() -> Option<PathBuf> {
+        dirs::cache_dir().map(|d| d.join("Explorist").join("device-index.bin"))
+    }
+
+    /// Reads last run's list of names in the background, so searching
+    /// everywhere works at once after starting.
+    pub(crate) fn load_saved_device_index(&mut self) {
+        if self.device_index.is_some() || self.device_index_loading.is_some() {
             return;
         }
+        let Some(file) = Self::device_index_file().filter(|f| f.is_file()) else {
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = self.ctx.clone();
+        std::thread::Builder::new()
+            .name("explorist-index-load".into())
+            .spawn(move || {
+                let _ = tx.send(crate::fs::index::NameIndex::load(&file));
+                ctx.request_repaint();
+            })
+            .ok();
+        self.device_index_loading = Some(rx);
+    }
+
+    /// Each frame: takes in a loaded or freshly made list, and saves a
+    /// finished one.
+    pub(crate) fn poll_device_index(&mut self) {
+        const MAX_AGE: Duration = Duration::from_secs(15 * 60);
+        if let Some(rx) = &self.device_index_loading
+            && let Ok(loaded) = rx.try_recv()
+        {
+            self.device_index_loading = None;
+            if self.device_index.is_none()
+                && let Some(loaded) = loaded
+            {
+                // Old by definition: the next search starts a fresh one.
+                let built = Instant::now()
+                    .checked_sub(MAX_AGE)
+                    .unwrap_or_else(Instant::now);
+                self.device_index = Some((built, Arc::new(loaded)));
+            }
+        }
+        if self.device_index_next.as_ref().is_some_and(|n| n.is_done()) {
+            let next = self.device_index_next.take().expect("checked above");
+            self.device_index = Some((Instant::now(), next));
+            self.device_index_unsaved = true;
+        }
+        if self.device_index_unsaved
+            && let Some((_, index)) = &self.device_index
+            && index.is_done()
+        {
+            self.device_index_unsaved = false;
+            if let Some(file) = Self::device_index_file() {
+                let index = Arc::clone(index);
+                std::thread::Builder::new()
+                    .name("explorist-index-save".into())
+                    .spawn(move || {
+                        let _ = index.save(&file);
+                    })
+                    .ok();
+            }
+        }
+    }
+
+    /// Starts listing every name on the device, or again when the list is
+    /// old, for searching Everywhere. A list that's being replaced keeps
+    /// answering until the new one is done.
+    pub(crate) fn ensure_device_index(&mut self) {
+        const MAX_AGE: Duration = Duration::from_secs(15 * 60);
+        if self.device_index_next.is_some() {
+            return;
+        }
+        let refresh = match &self.device_index {
+            Some((built, index)) => {
+                if !index.is_done() || built.elapsed() < MAX_AGE {
+                    return;
+                }
+                true
+            }
+            // Read last run's list for now, and make a fresh one behind it.
+            None if self.device_index_loading.is_some() => true,
+            None if Self::device_index_file().is_some_and(|f| f.is_file()) => {
+                self.load_saved_device_index();
+                true
+            }
+            None => false,
+        };
         let drives = self.drives.lock().map(|d| d.clone()).unwrap_or_default();
         // Network and disc drives are slow and rarely what's wanted.
         let roots: Vec<PathBuf> = drives
@@ -458,10 +560,15 @@ impl ExploristApp {
             .collect()
         };
         let ctx = self.ctx.clone();
-        self.device_index = Some((
-            Instant::now(),
-            crate::fs::index::NameIndex::start(roots, skip, move || ctx.request_repaint()),
-        ));
+        let index = Arc::new(crate::fs::index::NameIndex::start(roots, skip, move || {
+            ctx.request_repaint()
+        }));
+        if refresh {
+            self.device_index_next = Some(index);
+        } else {
+            self.device_index = Some((Instant::now(), index));
+            self.device_index_unsaved = true;
+        }
     }
 
     /// Reads the drive list again on the next frame, e.g. after a copy
@@ -530,6 +637,10 @@ impl ExploristApp {
             || self.view.palette.is_some()
             || self.view.batch.is_some()
         {
+            return;
+        }
+        if self.view.settings.recording_quick {
+            self.record_quick_keys(ctx);
             return;
         }
         if let Some(command) = self.view.settings.recording {
@@ -1104,6 +1215,16 @@ impl ExploristApp {
 }
 
 impl eframe::App for ExploristApp {
+    /// Runs before every frame, and also while the window is hidden in the
+    /// tray (when `ui` doesn't run at all), so the tray icon, a second
+    /// launch and the search shortcut can still bring things up.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.update_tray(ctx);
+        self.check_for_updates_regularly();
+        self.poll_device_index();
+        self.quick_search_logic(ctx);
+    }
+
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         if std::mem::take(&mut self.view.release_pointer) {
             let (pos, modifiers) = ctx.input(|i| {
@@ -1124,8 +1245,6 @@ impl eframe::App for ExploristApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        self.update_tray(&ctx);
-        self.check_for_updates_regularly();
         let palette = self.current_palette(&ctx);
         if palette != self.palette || ctx.cumulative_frame_nr() == 0 {
             self.palette = palette;
@@ -1187,6 +1306,7 @@ impl eframe::App for ExploristApp {
         ui::palette::show(&ctx, self);
         ui::batch_rename::show(&ctx, self);
         ui::update::show(&ctx, self);
+        self.quick_search_ui(&ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -1206,7 +1326,10 @@ impl ExploristApp {
             self.tray = None;
         }
         if let Some(listener) = &self.instance {
-            listener.set_accepting(self.tray.is_some());
+            listener.set_accepting(self.tray.is_some(), self.settings.quick_search);
+            if listener.take_search() {
+                crate::ui::quick_search::open_at_start();
+            }
         }
 
         let clicked = self.tray.as_ref().is_some_and(tray::Tray::take_show);
@@ -1232,6 +1355,17 @@ impl ExploristApp {
             // Saved as if closing, in case it's never opened again.
             self.save_settings();
         }
+    }
+
+    /// This is the first Explorist running (later ones hand over to it, or
+    /// are extra windows).
+    pub(crate) fn is_first_instance(&self) -> bool {
+        self.instance.is_some()
+    }
+
+    /// The device's list of names is being made again behind the scenes.
+    pub(crate) fn device_index_refreshing(&self) -> bool {
+        self.device_index_next.is_some()
     }
 
     /// Closes the window for real, even with Close to tray on.

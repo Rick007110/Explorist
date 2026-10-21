@@ -16,6 +16,7 @@ pub mod palette;
 pub mod preview;
 pub mod properties;
 pub mod quick_look;
+pub mod quick_search;
 pub mod settings;
 pub mod sidebar;
 pub mod start_page;

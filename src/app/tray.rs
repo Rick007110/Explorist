@@ -145,3 +145,31 @@ pub fn set_dock_icon(shown: bool) {
 
 #[cfg(not(target_os = "macos"))]
 pub fn set_dock_icon(_shown: bool) {}
+
+/// Brings Explorist to the front without showing its Dock icon, for the
+/// quick search box. Elsewhere, focusing the window is enough.
+#[cfg(target_os = "macos")]
+pub fn activate_app() {
+    use objc2_app_kit::NSApplication;
+    if let Some(mtm) = objc2::MainThreadMarker::new() {
+        #[allow(deprecated)]
+        NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn activate_app() {}
+
+/// Hands the keyboard back to the app used before the quick search box,
+/// when no Explorist window is showing. Windows and Linux do this
+/// themselves when the box hides.
+#[cfg(target_os = "macos")]
+pub fn hide_app() {
+    use objc2_app_kit::NSApplication;
+    if let Some(mtm) = objc2::MainThreadMarker::new() {
+        NSApplication::sharedApplication(mtm).hide(None);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn hide_app() {}
