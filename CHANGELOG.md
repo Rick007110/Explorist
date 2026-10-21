@@ -4,7 +4,7 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
-## Unreleased
+## 0.3.4
 
 ### New
 - **Video thumbnails**: videos show a frame from the video, with a small play button in the grid. On Windows these are the same thumbnails Explorer shows, so any video your installed codecs can play works; macOS uses Quick Look; Linux uses ffmpeg (or ffmpegthumbnailer) if it's installed. On Windows and macOS, image types Explorist can't read itself, like HEIC, get thumbnails the same way. More video types are recognized too (M4V, WMV, FLV, MPEG, 3GP, M2TS, OGV).
