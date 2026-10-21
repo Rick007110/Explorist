@@ -479,16 +479,7 @@ fn draw(ui: &mut egui::Ui, shared: &mut Shared) {
     }
     let command = Modifiers::COMMAND;
     let (escape, up, down, enter, reveal, copy) = ui.input_mut(|i| {
-        let copy = i.events.iter().any(|e| match e {
-            Event::Key {
-                key: Key::C,
-                pressed: true,
-                modifiers,
-                ..
-            } => modifiers.command && modifiers.shift,
-            Event::Copy => i.modifiers.command && i.modifiers.shift,
-            _ => false,
-        });
+        let copy = copy_path_pressed(&i.events, i.modifiers.shift);
         (
             i.consume_key(Modifiers::NONE, Key::Escape),
             i.consume_key(Modifiers::NONE, Key::ArrowUp),
@@ -731,6 +722,43 @@ fn draw(ui: &mut egui::Ui, shared: &mut Shared) {
     }
 }
 
+/// Whether Ctrl Shift C (⌘ Shift C) was pressed. Ctrl C arrives as a Copy
+/// event that doesn't say whether Shift was down, and a quick press can be
+/// over (Shift up again) by the time the frame sees it, so Shift is
+/// followed through its own press and release events instead.
+fn copy_path_pressed(events: &[Event], shift_now: bool) -> bool {
+    let shift_event = |e: &Event| match e {
+        Event::Key {
+            key: Key::ShiftLeft | Key::ShiftRight,
+            pressed,
+            ..
+        } => Some(*pressed),
+        _ => None,
+    };
+    // Down at the start if its first event this frame lets it go.
+    let mut shift = events
+        .iter()
+        .find_map(shift_event)
+        .map_or(shift_now, |pressed| !pressed);
+    for event in events {
+        if let Some(pressed) = shift_event(event) {
+            shift = pressed;
+            continue;
+        }
+        match event {
+            Event::Key {
+                key: Key::C,
+                pressed: true,
+                modifiers,
+                ..
+            } if modifiers.command && modifiers.shift => return true,
+            Event::Copy if shift => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Searches again when the query, the list or the apps changed.
 fn search(shared: &mut Shared) {
     let generation = shared.index.as_ref().map_or(0, |i| i.generation());
@@ -845,13 +873,16 @@ fn request_icons(shared: &mut Shared, ctx: &egui::Context) {
 
 /// An app's icon, as an image.
 fn app_icon(icon: &AppIcon) -> Option<ColorImage> {
-    let rgba = match icon {
+    let rgba: Option<image::RgbaImage> = match icon {
         AppIcon::File(path) => return crate::ui::image_icon::load(path),
         #[cfg(windows)]
-        AppIcon::Shell(name) => crate::fs::system_thumbs::icon(std::ffi::OsStr::new(name), 64)?,
-        AppIcon::Bundle(path) => crate::fs::system_thumbs::thumbnail(path, 64)?,
-        _ => return None,
+        AppIcon::Shell(name) => crate::fs::system_thumbs::icon(std::ffi::OsStr::new(name), 64),
+        #[cfg(target_os = "macos")]
+        AppIcon::Bundle(path) => crate::fs::system_thumbs::app_icon(path, 64)
+            .or_else(|| crate::fs::system_thumbs::thumbnail(path, 64)),
+        _ => None,
     };
+    let rgba = rgba?;
     Some(ColorImage::from_rgba_unmultiplied(
         [rgba.width() as usize, rgba.height() as usize],
         rgba.as_raw(),
@@ -1001,6 +1032,32 @@ mod tests {
         shared.apps_serial += 1;
         search(&mut shared);
         assert_eq!(shared.selected, 0);
+    }
+
+    #[test]
+    fn copy_path_needs_shift_even_when_pressed_quickly() {
+        let shift = |pressed| Event::Key {
+            key: Key::ShiftLeft,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        // Held across frames.
+        assert!(copy_path_pressed(&[Event::Copy], true));
+        // Pressed and let go within one frame.
+        assert!(copy_path_pressed(
+            &[shift(true), Event::Copy, shift(false)],
+            false
+        ));
+        // Let go in the frame of the copy, having been held before.
+        assert!(copy_path_pressed(&[Event::Copy, shift(false)], false));
+        // Plain Ctrl C is for the text in the field.
+        assert!(!copy_path_pressed(&[Event::Copy], false));
+        assert!(!copy_path_pressed(
+            &[shift(true), shift(false), Event::Copy],
+            false
+        ));
     }
 
     #[test]

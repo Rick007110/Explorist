@@ -42,7 +42,9 @@ zbus = { version = "5", default-features = false, features = ["async-io", "block
 [target.'cfg(target_os = "macos")'.dependencies]
 # Hiding the Dock icon while Explorist sits in the menu bar.
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSRunningApplication"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSBitmapImageRep", "NSImage", "NSImageRep", "NSResponder", "NSRunningApplication", "NSWorkspace"] }
+# App icons for quick search.
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSDictionary", "NSGeometry", "NSString"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

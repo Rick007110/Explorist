@@ -25,6 +25,30 @@ pub fn com() {
     platform::com();
 }
 
+/// An app's icon (a `.app` bundle) from the system, as Finder shows it.
+#[cfg(target_os = "macos")]
+pub fn app_icon(path: &Path, side: u32) -> Option<image::RgbaImage> {
+    use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSWorkspace};
+    use objc2_foundation::{NSDictionary, NSSize, NSString};
+    objc2::rc::autoreleasepool(|_| {
+        let icon = NSWorkspace::sharedWorkspace()
+            .iconForFile(&NSString::from_str(&path.to_string_lossy()));
+        icon.setSize(NSSize::new(f64::from(side), f64::from(side)));
+        let tiff = icon.TIFFRepresentation()?;
+        let bitmap = NSBitmapImageRep::imageRepWithData(&tiff)?;
+        // SAFETY: no properties is a valid set of properties.
+        let png = unsafe {
+            bitmap.representationUsingType_properties(
+                NSBitmapImageFileType::PNG,
+                &NSDictionary::new(),
+            )
+        }?;
+        let image =
+            image::load_from_memory_with_format(&png.to_vec(), image::ImageFormat::Png).ok()?;
+        Some(image.thumbnail(side, side).to_rgba8())
+    })
+}
+
 /// Whether this computer can make video thumbnails at all. When it can't,
 /// a missing thumbnail isn't remembered, so installing a tool helps.
 pub fn available() -> bool {
