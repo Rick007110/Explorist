@@ -2,6 +2,7 @@
 //!
 //! Nothing in here depends on the UI, so all of it is unit-tested.
 
+pub mod apps;
 pub mod archive;
 pub mod batch;
 pub mod clipboard;

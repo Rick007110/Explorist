@@ -60,6 +60,8 @@ pub struct Settings {
     pub quick_search: bool,
     /// Its keys, like "Alt+Space".
     pub quick_search_keys: String,
+    /// Quick search finds and starts apps too.
+    pub quick_search_apps: bool,
     /// Folders open in tabs when Explorist closed, and which was active.
     pub open_tabs: Vec<PathBuf>,
     pub active_tab: usize,
@@ -115,6 +117,7 @@ impl Default for Settings {
             close_to_tray: true,
             quick_search: true,
             quick_search_keys: "Alt+Space".to_owned(),
+            quick_search_apps: true,
             open_tabs: Vec::new(),
             active_tab: 0,
             git_status: true,
@@ -396,6 +399,7 @@ mod tests {
             close_to_tray: false,
             quick_search: false,
             quick_search_keys: "Ctrl+Shift+F".to_owned(),
+            quick_search_apps: false,
             open_tabs: vec![PathBuf::from("C:\\Users"), PathBuf::from("D:\\photos")],
             active_tab: 1,
             git_status: false,

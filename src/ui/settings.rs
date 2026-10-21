@@ -310,7 +310,7 @@ fn section_rows(section: Section) -> Vec<(&'static str, &'static str)> {
             ),
             (
                 "Quick search",
-                "A shortcut that works in any app and opens a box over everything for finding any file on this device. Explorist keeps a list of every file name, so results come as you type.",
+                "A shortcut that works in any app and opens a box over everything for finding any app or file on this device. Explorist keeps a list of every file name, so results come as you type.",
             ),
             (
                 "Close to tray",
@@ -527,6 +527,15 @@ fn general(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mut
             if widgets::button(ui, p, label, ButtonStyle::Secondary, None).clicked() {
                 record = Some(!recording);
             }
+        });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            widgets::switch(ui, p, &mut s.quick_search_apps);
+            ui.label(
+                egui::RichText::new("Find and open apps too")
+                    .font(text::body())
+                    .color(p.text),
+            );
         });
         let note = |text: String, color| {
             egui::Label::new(

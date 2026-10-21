@@ -13,6 +13,18 @@ pub fn thumbnail(path: &Path, side: u32) -> Option<image::RgbaImage> {
     platform::thumbnail(path, side)
 }
 
+/// An app's or file's icon from the Windows shell.
+#[cfg(windows)]
+pub fn icon(name: &std::ffi::OsStr, side: u32) -> Option<image::RgbaImage> {
+    platform::icon(name, side)
+}
+
+/// Joins COM on this thread (Windows), before using the shell.
+#[cfg(windows)]
+pub fn com() {
+    platform::com();
+}
+
 /// Whether this computer can make video thumbnails at all. When it can't,
 /// a missing thumbnail isn't remembered, so installing a tool helps.
 pub fn available() -> bool {
@@ -32,7 +44,7 @@ mod platform {
     };
     use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
     use windows_sys::Win32::UI::Shell::{
-        SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_THUMBNAILONLY,
+        SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY, SIIGBF_THUMBNAILONLY,
     };
     use windows_sys::core::{GUID, HRESULT};
 
@@ -53,14 +65,29 @@ mod platform {
     }
 
     pub fn thumbnail(path: &Path, side: u32) -> Option<image::RgbaImage> {
+        shell_image(path.as_os_str(), side, SIIGBF_THUMBNAILONLY)
+    }
+
+    /// The icon of anything the shell can name: a file, or an app as
+    /// `shell:AppsFolder\<id>`.
+    pub fn icon(name: &std::ffi::OsStr, side: u32) -> Option<image::RgbaImage> {
+        shell_image(name, side, SIIGBF_ICONONLY)
+    }
+
+    /// Joins COM on this thread, once.
+    pub fn com() {
         thread_local! {
-            // Each worker thread joins COM once; failure means it already had.
+            // Failure means the thread already had.
             static COM: () = unsafe {
                 CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as _);
             };
         }
         COM.with(|_| ());
-        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    }
+
+    fn shell_image(name: &std::ffi::OsStr, side: u32, kind: i32) -> Option<image::RgbaImage> {
+        com();
+        let wide: Vec<u16> = name.encode_wide().chain(Some(0)).collect();
         let mut factory: *mut c_void = std::ptr::null_mut();
         // SAFETY: `wide` is a NUL-terminated path; `factory` receives an
         // interface pointer we release below.
@@ -84,12 +111,7 @@ mod platform {
         // starts with IUnknown's methods followed by GetImage.
         let hr = unsafe {
             let vtbl = *(factory as *const *const Vtbl);
-            let hr = ((*vtbl).get_image)(
-                factory,
-                size,
-                SIIGBF_THUMBNAILONLY | SIIGBF_BIGGERSIZEOK,
-                &mut bitmap,
-            );
+            let hr = ((*vtbl).get_image)(factory, size, kind | SIIGBF_BIGGERSIZEOK, &mut bitmap);
             ((*vtbl).release)(factory);
             hr
         };

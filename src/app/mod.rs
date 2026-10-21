@@ -312,6 +312,7 @@ impl ExploristApp {
             } else {
                 app.ensure_device_index();
             }
+            app.list_apps_if_old();
         }
         if let LoadOutcome::Invalid { error, .. } = outcome {
             app.toast_error(format!(

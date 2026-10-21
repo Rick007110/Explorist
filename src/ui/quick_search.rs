@@ -10,19 +10,23 @@
 //! The box draws on its own (a "deferred" viewport), so what it shares with
 //! the app goes through [`Shared`].
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
 use egui::{
-    Color32, CornerRadius, Event, Id, Key, Modifiers, Pos2, Rect, ScrollArea, Sense, Stroke,
-    StrokeKind, ViewportBuilder, ViewportCommand, ViewportId, vec2,
+    Color32, ColorImage, CornerRadius, Event, Id, Key, Modifiers, Pos2, Rect, ScrollArea, Sense,
+    Stroke, StrokeKind, TextureHandle, ViewportBuilder, ViewportCommand, ViewportId, vec2,
 };
 use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 
 use crate::app::ExploristApp;
+use crate::fs::apps::{self, App, Icon as AppIcon};
 use crate::fs::index::NameIndex;
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme::{Palette, radius};
@@ -32,6 +36,10 @@ const WIDTH: f32 = 700.0;
 const HEIGHT: f32 = 470.0;
 /// Results shown at most.
 const LIMIT: usize = 60;
+/// Apps shown at most, above the files.
+const APPS: usize = 5;
+/// The app list is read again when the box opens after this long.
+const APPS_MAX_AGE: Duration = Duration::from_secs(120);
 const ROW: f32 = 46.0;
 
 /// Started with `--search` and nothing was running to hand it to.
@@ -66,14 +74,39 @@ struct Shared {
     palette: Option<Palette>,
     requests: Vec<Request>,
     error: Option<String>,
+    /// Installed apps, when they're searched too.
+    apps: Arc<Vec<App>>,
+    apps_enabled: bool,
+    /// Bumped when the apps or whether they're searched change.
+    apps_serial: u64,
+    apps_listed: Option<Instant>,
+    apps_listing: bool,
+    /// App icons by app, `None` while loading or when there's none.
+    icons: HashMap<String, Option<TextureHandle>>,
+    icon_requests: Option<Sender<(String, AppIcon)>>,
+    icon_results: Option<Receiver<(String, Option<ColorImage>)>>,
 }
 
 #[derive(Clone)]
 struct Row {
-    path: PathBuf,
-    is_dir: bool,
+    kind: RowKind,
     /// Matched parts of the name, as char ranges.
     matches: Vec<(usize, usize)>,
+}
+
+#[derive(Clone)]
+enum RowKind {
+    App(App),
+    Path { path: PathBuf, is_dir: bool },
+}
+
+impl Row {
+    fn name(&self) -> String {
+        match &self.kind {
+            RowKind::App(app) => app.name.clone(),
+            RowKind::Path { path, .. } => name_of(path),
+        }
+    }
 }
 
 /// What the box asks the app to do.
@@ -140,6 +173,10 @@ impl ExploristApp {
                 shared.recent = self.recent.iter().take(8).cloned().collect();
             }
             shared.palette = Some(self.palette);
+            if shared.apps_enabled != self.settings.quick_search_apps {
+                shared.apps_enabled = self.settings.quick_search_apps;
+                shared.apps_serial += 1;
+            }
             std::mem::take(&mut shared.requests)
         };
         let main_shown = ctx.input(|i| {
@@ -203,8 +240,40 @@ impl ExploristApp {
         });
     }
 
+    /// Reads the installed apps in the background, if they're searched and
+    /// the list is missing or old.
+    pub(crate) fn list_apps_if_old(&mut self) {
+        if !self.settings.quick_search_apps {
+            return;
+        }
+        let mut shared = self.quick.shared.lock().unwrap();
+        let old = shared
+            .apps_listed
+            .is_none_or(|t| t.elapsed() > APPS_MAX_AGE);
+        if !old || shared.apps_listing {
+            return;
+        }
+        shared.apps_listing = true;
+        shared.apps_listed = Some(Instant::now());
+        drop(shared);
+        let (shared, ctx) = (Arc::clone(&self.quick.shared), self.ctx.clone());
+        std::thread::Builder::new()
+            .name("explorist-apps".into())
+            .spawn(move || {
+                let list = apps::list();
+                let mut shared = shared.lock().unwrap_or_else(|e| e.into_inner());
+                shared.apps = Arc::new(list);
+                shared.apps_serial += 1;
+                shared.apps_listing = false;
+                drop(shared);
+                ctx.request_repaint_of(viewport());
+            })
+            .ok();
+    }
+
     fn open_quick_search(&mut self, ctx: &egui::Context) {
         self.ensure_device_index();
+        self.list_apps_if_old();
         {
             let mut shared = self.quick.shared.lock().unwrap();
             shared.open = true;
@@ -476,7 +545,7 @@ fn draw(ui: &mut egui::Ui, shared: &mut Shared) {
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(text_rect));
     let output = egui::TextEdit::singleline(&mut shared.query)
         .id(id)
-        .hint_text("Search every file on this device")
+        .hint_text("Search apps and files")
         .font(crate::ui::fonts::regular(19.0))
         .text_color(p.text)
         .frame(egui::Frame::NONE)
@@ -512,10 +581,11 @@ fn draw(ui: &mut egui::Ui, shared: &mut Shared) {
         Pos2::new(full.right() - 8.0, full.bottom() - footer - 4.0),
     );
     let mut chosen: Option<(usize, bool)> = None;
+    request_icons(shared, &ctx);
     let mut list_ui = ui.new_child(egui::UiBuilder::new().max_rect(list));
     if shared.results.is_empty() {
         let text = if shared.query.trim().is_empty() {
-            "Type a name to find it anywhere on this device."
+            "Type a name to find any app or file on this device."
         } else if shared.index.as_ref().is_some_and(|i| !i.is_done()) {
             "Still listing files…"
         } else {
@@ -542,7 +612,7 @@ fn draw(ui: &mut egui::Ui, shared: &mut Shared) {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 for (i, row) in shared.results.iter().enumerate() {
                     let selected = i == shared.selected;
-                    if row_ui(ui, &p, row, selected) {
+                    if row_ui(ui, &p, row, selected, &shared.icons) {
                         chosen = Some((i, false));
                     }
                     if selected && (up || down) {
@@ -605,58 +675,155 @@ fn draw(ui: &mut egui::Ui, shared: &mut Shared) {
         chosen = Some((shared.selected, true));
     }
     if copy && let Some(row) = shared.results.get(shared.selected) {
-        ctx.copy_text(row.path.display().to_string());
+        let text = match &row.kind {
+            RowKind::App(app) => app
+                .file
+                .as_ref()
+                .map_or_else(|| app.target.clone(), |f| f.display().to_string()),
+            RowKind::Path { path, .. } => path.display().to_string(),
+        };
+        ctx.copy_text(text);
         shared.close(&ctx);
         return;
     }
     if let Some((i, reveal)) = chosen {
-        let row = shared.results[i].clone();
-        if reveal || row.is_dir {
-            shared.requests.push(Request::Reveal(row.path, row.is_dir));
-            shared.close(&ctx);
-        } else if !row.path.exists() {
-            shared.error = Some(format!("“{}” isn't there any more.", name_of(&row.path)));
-        } else {
-            match open::that_detached(&row.path) {
-                Ok(()) => shared.close(&ctx),
-                Err(err) => shared.error = Some(format!("Couldn't open it: {err}")),
+        match shared.results[i].kind.clone() {
+            RowKind::App(app) => match (&app.file, reveal) {
+                (Some(file), true) => {
+                    shared.requests.push(Request::Reveal(file.clone(), false));
+                    shared.close(&ctx);
+                }
+                _ => match apps::launch(&app) {
+                    Ok(()) => shared.close(&ctx),
+                    Err(err) => {
+                        shared.error = Some(format!("Couldn't start {}: {err}", app.name));
+                    }
+                },
+            },
+            RowKind::Path { path, is_dir } => {
+                if reveal || is_dir {
+                    shared.requests.push(Request::Reveal(path, is_dir));
+                    shared.close(&ctx);
+                } else if !path.exists() {
+                    shared.error = Some(format!("“{}” isn't there any more.", name_of(&path)));
+                } else {
+                    match open::that_detached(&path) {
+                        Ok(()) => shared.close(&ctx),
+                        Err(err) => shared.error = Some(format!("Couldn't open it: {err}")),
+                    }
+                }
             }
         }
     }
 }
 
-/// Searches again when the query or the list changed.
+/// Searches again when the query, the list or the apps changed.
 fn search(shared: &mut Shared) {
     let generation = shared.index.as_ref().map_or(0, |i| i.generation());
-    let key = (shared.query.clone(), generation);
+    let key = (
+        shared.query.clone(),
+        generation ^ (shared.apps_serial << 48),
+    );
     if shared.searched.as_ref() == Some(&key) {
         return;
     }
     let query = shared.query.trim();
-    shared.results = if query.is_empty() {
-        shared
-            .recent
-            .iter()
-            .map(|path| Row {
-                path: path.clone(),
-                is_dir: true,
-                matches: Vec::new(),
-            })
-            .collect()
-    } else {
-        shared.index.as_ref().map_or_else(Vec::new, |index| {
-            index
-                .search(query, LIMIT)
-                .into_iter()
-                .map(|hit| Row {
-                    path: hit.path,
-                    is_dir: hit.is_dir,
-                    matches: hit.matches,
+    shared.results =
+        if query.is_empty() {
+            shared
+                .recent
+                .iter()
+                .map(|path| Row {
+                    kind: RowKind::Path {
+                        path: path.clone(),
+                        is_dir: true,
+                    },
+                    matches: Vec::new(),
                 })
                 .collect()
-        })
-    };
+        } else {
+            let mut rows = Vec::new();
+            if shared.apps_enabled {
+                rows.extend(apps::find(&shared.apps, query, APPS).into_iter().map(
+                    |(i, matches)| Row {
+                        kind: RowKind::App(shared.apps[i].clone()),
+                        matches,
+                    },
+                ));
+            }
+            if let Some(index) = &shared.index {
+                rows.extend(index.search(query, LIMIT).into_iter().map(|hit| Row {
+                    kind: RowKind::Path {
+                        path: hit.path,
+                        is_dir: hit.is_dir,
+                    },
+                    matches: hit.matches,
+                }));
+            }
+            rows
+        };
     shared.searched = Some(key);
+}
+
+/// Asks for the icons of the apps in the results, loaded off this thread.
+fn request_icons(shared: &mut Shared, ctx: &egui::Context) {
+    if let Some(results) = &shared.icon_results {
+        for (key, image) in results.try_iter() {
+            let texture =
+                image.map(|i| ctx.load_texture(format!("app-icon:{key}"), i, Default::default()));
+            shared.icons.insert(key, texture);
+        }
+    }
+    let wanted: Vec<(String, AppIcon)> = shared
+        .results
+        .iter()
+        .filter_map(|row| match &row.kind {
+            RowKind::App(app) if !shared.icons.contains_key(&app.target) => {
+                Some((app.target.clone(), app.icon.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    if wanted.is_empty() {
+        return;
+    }
+    let sender = shared.icon_requests.get_or_insert_with(|| {
+        let (requests, inbox) = std::sync::mpsc::channel::<(String, AppIcon)>();
+        let (outbox, results) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::Builder::new()
+            .name("explorist-app-icons".into())
+            .spawn(move || {
+                for (key, icon) in inbox {
+                    if outbox.send((key, app_icon(&icon))).is_err() {
+                        return;
+                    }
+                    ctx.request_repaint_of(viewport());
+                }
+            })
+            .ok();
+        shared.icon_results = Some(results);
+        requests
+    });
+    for (key, icon) in wanted {
+        let _ = sender.send((key.clone(), icon));
+        shared.icons.insert(key, None);
+    }
+}
+
+/// An app's icon, as an image.
+fn app_icon(icon: &AppIcon) -> Option<ColorImage> {
+    let rgba = match icon {
+        AppIcon::File(path) => return crate::ui::image_icon::load(path),
+        #[cfg(windows)]
+        AppIcon::Shell(name) => crate::fs::system_thumbs::icon(std::ffi::OsStr::new(name), 64)?,
+        AppIcon::Bundle(path) => crate::fs::system_thumbs::thumbnail(path, 64)?,
+        _ => return None,
+    };
+    Some(ColorImage::from_rgba_unmultiplied(
+        [rgba.width() as usize, rgba.height() as usize],
+        rgba.as_raw(),
+    ))
 }
 
 fn status_text(shared: &Shared) -> String {
@@ -683,8 +850,15 @@ fn name_of(path: &std::path::Path) -> String {
     )
 }
 
-/// One result: icon, name with the matches picked out, and its folder.
-fn row_ui(ui: &mut egui::Ui, p: &Palette, row: &Row, selected: bool) -> bool {
+/// One result: icon, name with the matches picked out, and its folder
+/// (or "App").
+fn row_ui(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    row: &Row,
+    selected: bool,
+    icons: &HashMap<String, Option<TextureHandle>>,
+) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
     if selected {
         ui.painter()
@@ -696,23 +870,32 @@ fn row_ui(ui: &mut egui::Ui, p: &Palette, row: &Row, selected: bool) -> bool {
         ui.painter()
             .rect_filled(rect, CornerRadius::same(radius::MD), p.hover);
     }
-    let name = name_of(&row.path);
-    let (icon, color) = if row.is_dir {
-        (Icon::Folder, p.accent)
-    } else {
-        let kind = crate::fs::kind::classify(&name, false).0;
-        (Icon::for_kind(kind), p.text_2)
-    };
-    icons::paint(
-        ui.painter(),
-        Rect::from_center_size(
-            Pos2::new(rect.left() + 22.0, rect.center().y),
-            vec2(20.0, 20.0),
-        ),
-        icon,
-        20.0,
-        color,
+    let name = row.name();
+    let icon_rect = Rect::from_center_size(
+        Pos2::new(rect.left() + 22.0, rect.center().y),
+        vec2(20.0, 20.0),
     );
+    let picture = match &row.kind {
+        RowKind::App(app) => icons.get(&app.target).cloned().flatten(),
+        RowKind::Path { .. } => None,
+    };
+    if let Some(texture) = picture {
+        let size = texture.size_vec2();
+        let side = 26.0;
+        let scale = side / size.x.max(size.y);
+        egui::Image::new(&texture)
+            .paint_at(ui, Rect::from_center_size(icon_rect.center(), size * scale));
+    } else {
+        let (icon, color) = match &row.kind {
+            RowKind::App(_) => (Icon::Exe, p.text_2),
+            RowKind::Path { is_dir: true, .. } => (Icon::Folder, p.accent),
+            RowKind::Path { .. } => {
+                let kind = crate::fs::kind::classify(&name, false).0;
+                (Icon::for_kind(kind), p.text_2)
+            }
+        };
+        icons::paint(ui.painter(), icon_rect, icon, 20.0, color);
+    }
     let left = rect.left() + 46.0;
     let width = rect.right() - left - 12.0;
 
@@ -740,20 +923,24 @@ fn row_ui(ui: &mut egui::Ui, p: &Palette, row: &Row, selected: bool) -> bool {
         Color32::PLACEHOLDER,
     );
 
-    let folder = row
-        .path
-        .parent()
-        .map(|d| d.display().to_string())
-        .unwrap_or_default();
-    let folder = crate::ui::palette::tail_truncated(
-        ui,
-        &folder,
-        crate::ui::fonts::mono(11.5),
-        p.muted,
-        width,
-    );
+    let detail = match &row.kind {
+        RowKind::App(_) => {
+            ui.painter()
+                .layout_no_wrap("App".to_owned(), crate::ui::fonts::regular(12.0), p.muted)
+        }
+        RowKind::Path { path, .. } => crate::ui::palette::tail_truncated(
+            ui,
+            &path
+                .parent()
+                .map(|d| d.display().to_string())
+                .unwrap_or_default(),
+            crate::ui::fonts::mono(11.5),
+            p.muted,
+            width,
+        ),
+    };
     ui.painter()
-        .galley(Pos2::new(left, rect.top() + 26.0), folder, p.muted);
+        .galley(Pos2::new(left, rect.top() + 26.0), detail, p.muted);
     response.clicked()
 }
 

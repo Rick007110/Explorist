@@ -95,7 +95,7 @@ fn prune_in(settings: &Settings, dir: &Path) {
 }
 
 /// Reads an image, scaled down to fit [`PIXELS`].
-fn load(path: &Path) -> Option<egui::ColorImage> {
+pub(crate) fn load(path: &Path) -> Option<egui::ColorImage> {
     let is_svg = path
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("svg"));
