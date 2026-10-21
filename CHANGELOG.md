@@ -11,6 +11,7 @@ shows the first points.
 
 ### Changed
 - **Searching everywhere is faster and ready at once**: the list of every file name on the device is saved between runs, so searches work right after Explorist starts, and it's refreshed in the background without the results going away meanwhile. Searching it is several times faster: a few milliseconds even with millions of files.
+- **Explorist is now open source** under the GNU General Public License v3 (or later): you're free to use, study, change and share it.
 
 ### Fixed
 - Clicking the tray icon, or opening Explorist again, might not bring back the window hidden in the tray on Windows.

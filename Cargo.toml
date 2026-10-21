@@ -3,6 +3,7 @@ name = "explorist"
 version = "0.3.4"
 edition = "2024"
 description = "A fast, keyboard-friendly file manager for Windows"
+license = "GPL-3.0-or-later"
 rust-version = "1.85"
 build = "build.rs"
 

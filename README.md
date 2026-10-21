@@ -103,3 +103,10 @@ releases while the repository (or a release mirror) is public.
 ## Fonts and icons
 
 Explorist bundles [Geist and Geist Mono](https://vercel.com/font) under the SIL Open Font License (see `assets/fonts/OFL.txt`) and icons from [Lucide](https://lucide.dev) under the ISC License (see `assets/icons/lucide/LICENSE`).
+
+## License
+
+Explorist is free software: you can use, change and share it under the GNU
+General Public License, version 3 or (at your option) any later version. See
+[LICENSE](LICENSE). The bundled fonts and icons keep their own licenses, listed
+above.
