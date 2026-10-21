@@ -304,7 +304,7 @@ fn section_rows(section: Section) -> Vec<(&'static str, &'static str)> {
             ("Pinned folders", "Shown under Favorites in the sidebar."),
             (
                 "Updates",
-                "Checks for a new version when Explorist starts and every few hours while it runs.",
+                "Checks for a new version every time Explorist starts and every 4 hours while it runs.",
             ),
             (
                 "Close to tray",

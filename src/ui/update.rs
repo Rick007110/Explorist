@@ -40,9 +40,9 @@ fn now_secs() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
-/// Starting (or reopening from the tray) checks again only after this
-/// long, so restarting a few times doesn't check each time.
-const RECHECK_AFTER: i64 = 15 * 60;
+/// Bringing the window back from the tray checks again only after this
+/// long, so hiding and showing it quickly doesn't check each time.
+const RECHECK_AFTER: i64 = 60;
 /// While Explorist keeps running (in the tray, say), it checks this often.
 const CHECK_EVERY: i64 = 4 * 60 * 60;
 
@@ -53,9 +53,16 @@ fn due(last: Option<i64>, now: i64, gap: i64) -> bool {
 }
 
 impl ExploristApp {
-    /// At startup and when the window comes back from the tray: check,
-    /// unless that was done minutes ago.
-    pub(crate) fn maybe_check_for_updates(&mut self) {
+    /// At startup: always check (when allowed).
+    pub(crate) fn check_for_updates_at_start(&mut self) {
+        if self.settings.updates.check_automatically {
+            self.check_for_updates(false);
+        }
+    }
+
+    /// When the window comes back from the tray, which to the user is
+    /// starting Explorist: check, unless that was done a moment ago.
+    pub(crate) fn check_for_updates_on_reopen(&mut self) {
         if self.settings.updates.check_automatically
             && due(
                 self.settings.updates.last_checked,
@@ -351,9 +358,9 @@ mod tests {
     fn checks_come_when_due() {
         let now = 1_800_000_000;
         assert!(due(None, now, RECHECK_AFTER));
-        // Restarting minutes later doesn't check again.
-        assert!(!due(Some(now - 5 * 60), now, RECHECK_AFTER));
-        assert!(due(Some(now - 20 * 60), now, RECHECK_AFTER));
+        // Showing the window again seconds later doesn't check again.
+        assert!(!due(Some(now - 20), now, RECHECK_AFTER));
+        assert!(due(Some(now - 5 * 60), now, RECHECK_AFTER));
         // While running, every few hours.
         assert!(!due(Some(now - 60 * 60), now, CHECK_EVERY));
         assert!(due(Some(now - 5 * 60 * 60), now, CHECK_EVERY));

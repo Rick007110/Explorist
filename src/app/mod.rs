@@ -290,7 +290,7 @@ impl ExploristApp {
                 }
             }
         }
-        app.maybe_check_for_updates();
+        app.check_for_updates_at_start();
         if let LoadOutcome::Invalid { error, .. } = outcome {
             app.toast_error(format!(
                 "Settings couldn’t be read, so defaults are in use: {error}"
@@ -1216,7 +1216,7 @@ impl ExploristApp {
             .is_some_and(instance::Listener::take_show);
         if clicked || reopened {
             // Like starting Explorist: see if there's an update.
-            self.maybe_check_for_updates();
+            self.check_for_updates_on_reopen();
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
