@@ -4,7 +4,9 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
-## Unreleased
+## 0.4.0-beta1
+
+A test version of 0.4.0, to try before it's released for everyone. Explorist's own update check doesn't offer it: download it below.
 
 ### New
 - **Quick search**: press **Alt Space** (Option Space on macOS) in any app to pop up a search box over everything and find any app or file on this device as you type, like Spotlight or Raycast. Apps come first, with their icons: on Windows every app in the Start menu (Store apps like Calculator and Settings included), on macOS the Applications folders, on Linux your desktop's app menu; type part of the name or its initials ("vsc" for Visual Studio Code). **Enter** starts the app or opens the file (a folder opens in Explorist), **Ctrl Enter** (⌘ Enter) shows it in Explorist, **Ctrl Shift C** copies its path (so does **Ctrl C** when no text is selected in the box), **Esc** closes. With nothing typed, it lists your recent folders. It's also in the tray icon's menu. Choose other keys, leave apps out, or turn it off in Settings → General. It works while Explorist is running, which with Close to tray means always. On Linux with Wayland, where apps can't set up such shortcuts, add one in your desktop's keyboard settings that runs `explorist --search`.

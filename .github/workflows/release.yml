@@ -4,8 +4,10 @@ name: Release
 # one GitHub Release. Either push a tag like v0.2.0 (matching the version
 # in Cargo.toml), or push a commit to the `release` branch and the tag
 # v<Cargo.toml version> is created for it. The app's update check picks
-# its platform's download. Pushing to `release-dry-run` builds every
-# package without publishing, to try out packaging changes.
+# its platform's download. A version with a pre-release part, like
+# 0.4.0-beta1, is published as a pre-release, which the update check skips.
+# Pushing to `release-dry-run` builds every package without publishing, to
+# try out packaging changes.
 on:
   push:
     tags: ["v*"]
@@ -195,3 +197,4 @@ jobs:
           target_commitish: ${{ github.sha }}
           files: dist/*
           body_path: notes.md
+          prerelease: ${{ contains(needs.version.outputs.version, '-') }}
