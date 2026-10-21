@@ -15,6 +15,7 @@ shows the first points.
 
 ### Fixed
 - Clicking the tray icon, or opening Explorist again, might not bring back the window hidden in the tray on Windows.
+- File names showed only as "…" when the window was narrow, as on smaller screens or with display scaling, with the preview panel open. Now the Type, Modified and Size columns make way for the name, in that order.
 - After clicking **Edit** for a keyboard shortcut (Settings → Keyboard), leaving Settings without pressing keys made the next shortcut you pressed anywhere in Explorist become that shortcut.
 
 ## 0.3.4

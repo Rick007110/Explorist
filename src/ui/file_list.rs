@@ -112,19 +112,50 @@ fn columns(row: Rect) -> [Rect; 4] {
         Pos2::new(row.left() + PAD_LEFT, row.top()),
         Pos2::new(row.right() - PAD_RIGHT, row.bottom()),
     );
-    let ty_left = inner.right() - size::COL_TYPE;
-    let mod_left = ty_left - size::COL_GAP - size::COL_MODIFIED;
-    let size_left = mod_left - size::COL_GAP - size::COL_SIZE;
-    let name_right = (size_left - size::COL_GAP).max(inner.left());
     let cell = |l: f32, r: f32| {
         Rect::from_min_max(Pos2::new(l, inner.top()), Pos2::new(r, inner.bottom()))
     };
+    // When there isn't room (a small screen, or display scaling, with the
+    // preview open), the other columns make way for the name, least
+    // useful first: Type, then Modified, then Size. Hidden ones are empty.
+    let widths = [size::COL_SIZE, size::COL_MODIFIED, size::COL_TYPE];
+    let taken = |n: usize| widths[..n].iter().map(|w| w + size::COL_GAP).sum::<f32>();
+    let mut kept = widths.len();
+    while kept > 0 && inner.width() - taken(kept) < NAME_MIN_WIDTH {
+        kept -= 1;
+    }
+    let mut cells = [cell(inner.right(), inner.right()); 3];
+    let mut right = inner.right();
+    for i in (0..kept).rev() {
+        cells[i] = cell(right - widths[i], right);
+        right -= widths[i] + size::COL_GAP;
+    }
+    let [size_cell, mod_cell, type_cell] = cells;
     [
-        cell(inner.left(), name_right),
-        cell(size_left, size_left + size::COL_SIZE),
-        cell(mod_left, mod_left + size::COL_MODIFIED),
-        cell(ty_left, inner.right()),
+        cell(inner.left(), right.max(inner.left())),
+        size_cell,
+        mod_cell,
+        type_cell,
     ]
+}
+
+/// Narrowest the Name column gets before other columns are hidden.
+const NAME_MIN_WIDTH: f32 = 180.0;
+
+/// Where a rename's error goes: over the other columns, or just below the
+/// name when they've made way for it.
+fn rename_error_area(name: Rect, size_cell: Rect, type_cell: Rect) -> Rect {
+    let beside = Rect::from_min_max(size_cell.min, type_cell.max);
+    if beside.width() >= 140.0 {
+        beside
+    } else {
+        Rect::from_min_size(name.left_bottom(), vec2(name.width(), 18.0))
+    }
+}
+
+/// Whether a column from [`columns`] is showing.
+fn shown(cell: Rect) -> bool {
+    cell.width() > 0.0
 }
 
 fn header(ui: &mut egui::Ui, app: &mut ExploristApp) {
@@ -149,6 +180,9 @@ fn header(ui: &mut egui::Ui, app: &mut ExploristApp) {
         ("Type", SortColumn::Type, Align2::LEFT_CENTER),
     ];
     for (cell, (label, column, align)) in cells.into_iter().zip(labels) {
+        if !shown(cell) {
+            continue;
+        }
         let active = sort.column == column;
         let font = if active {
             text::label()
@@ -453,7 +487,7 @@ fn draw_row(
             ui,
             app,
             name_rect,
-            Rect::from_min_max(size_cell.min, type_cell.max),
+            rename_error_area(name_rect, size_cell, type_cell),
             commands,
         );
     } else {
@@ -503,8 +537,10 @@ fn draw_row(
             }
             _ => (size_text, c),
         };
-        let g = ui.painter().layout_no_wrap(size_text, f, c);
-        widgets::paint_aligned(ui.painter(), size_cell, g, Align2::RIGHT_CENTER, c);
+        if shown(size_cell) {
+            let g = ui.painter().layout_no_wrap(size_text, f, c);
+            widgets::paint_aligned(ui.painter(), size_cell, g, Align2::RIGHT_CENTER, c);
+        }
         let date_format = app.settings.date_format;
         let (date, f, c) = meta(
             entry
@@ -512,21 +548,25 @@ fn draw_row(
                 .map(|t| format::date(t, date_format))
                 .unwrap_or_default(),
         );
-        let g = ui.painter().layout_no_wrap(date, f, c);
-        widgets::paint_aligned(ui.painter(), mod_cell, g, Align2::LEFT_CENTER, c);
+        if shown(mod_cell) {
+            let g = ui.painter().layout_no_wrap(date, f, c);
+            widgets::paint_aligned(ui.painter(), mod_cell, g, Align2::LEFT_CENTER, c);
+        }
         let type_label = if ignored {
             format!("{} · ignored", entry.type_label)
         } else {
             entry.type_label.to_string()
         };
-        let g = widgets::truncated(
-            ui,
-            &type_label,
-            crate::ui::fonts::regular(12.5),
-            p.muted,
-            type_cell.width(),
-        );
-        widgets::paint_aligned(ui.painter(), type_cell, g, Align2::LEFT_CENTER, p.muted);
+        if shown(type_cell) {
+            let g = widgets::truncated(
+                ui,
+                &type_label,
+                crate::ui::fonts::regular(12.5),
+                p.muted,
+                type_cell.width(),
+            );
+            widgets::paint_aligned(ui.painter(), type_cell, g, Align2::LEFT_CENTER, p.muted);
+        }
     }
 
     let grab = Rect::from_min_max(
@@ -1229,13 +1269,19 @@ fn skeleton(ui: &mut egui::Ui, app: &ExploristApp) {
             color,
         );
         let sw = 36.0 + (i * 7 % 20) as f32;
-        painter.rect_filled(bar(size_c.right() - sw, sw), CornerRadius::same(4), color);
-        painter.rect_filled(bar(date.left(), 112.0), CornerRadius::same(4), color);
-        painter.rect_filled(
-            bar(ty.left(), 52.0 + (i * 11 % 30) as f32),
-            CornerRadius::same(4),
-            color,
-        );
+        if shown(size_c) {
+            painter.rect_filled(bar(size_c.right() - sw, sw), CornerRadius::same(4), color);
+        }
+        if shown(date) {
+            painter.rect_filled(bar(date.left(), 112.0), CornerRadius::same(4), color);
+        }
+        if shown(ty) {
+            painter.rect_filled(
+                bar(ty.left(), 52.0 + (i * 11 % 30) as f32),
+                CornerRadius::same(4),
+                color,
+            );
+        }
         y += row_h + ROW_GAP;
     }
 }
@@ -1510,5 +1556,47 @@ fn error_code(err: &ListError) -> String {
         }
         Some(code) => format!("os error {code}"),
         None => "no error code".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(width: f32) -> Rect {
+        Rect::from_min_size(Pos2::ZERO, vec2(width, 30.0))
+    }
+
+    #[test]
+    fn wide_lists_show_every_column() {
+        let [name, size_c, date, ty] = columns(row(900.0));
+        assert!(shown(size_c) && shown(date) && shown(ty));
+        assert!(name.width() >= NAME_MIN_WIDTH);
+        assert!(name.right() < size_c.left() && size_c.right() < date.left());
+    }
+
+    /// A small screen with the preview open left names a few pixels wide.
+    #[test]
+    fn narrow_lists_drop_columns_for_the_name() {
+        for width in [700.0, 560.0, 460.0, 300.0, 120.0] {
+            let [name, size_c, date, ty] = columns(row(width));
+            let kept = [size_c, date, ty].iter().filter(|c| shown(**c)).count();
+            if kept > 0 {
+                assert!(
+                    name.width() >= NAME_MIN_WIDTH,
+                    "{width}: name {}",
+                    name.width()
+                );
+            }
+            // Type goes first, then Modified, then Size.
+            assert!(!shown(date) || shown(size_c), "{width}");
+            assert!(!shown(ty) || shown(date), "{width}");
+            // What's kept still fits beside the name, in order.
+            for c in [size_c, date, ty].into_iter().filter(|c| shown(*c)) {
+                assert!(c.left() > name.right() && c.right() <= width, "{width}");
+            }
+        }
+        let [name, ..] = columns(row(120.0));
+        assert!(name.width() > 0.0);
     }
 }
