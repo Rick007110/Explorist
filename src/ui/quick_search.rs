@@ -477,6 +477,13 @@ fn draw(ui: &mut egui::Ui, shared: &mut Shared) {
     if focused == Some(true) {
         shared.had_focus = true;
     }
+    // Ctrl C with nothing picked out in the field copies the result's path
+    // too: there's no text to copy then, and it's the one sure way on
+    // macOS, where a quick Cmd Shift C can arrive without its Shift.
+    let field_selection = egui::TextEdit::load_state(&ctx, Id::new("quick-search-field"))
+        .and_then(|state| state.cursor.char_range())
+        .is_some_and(|range| !range.is_empty());
+    let plain_copy = ui.input(|i| i.events.iter().any(|e| matches!(e, Event::Copy)));
     let command = Modifiers::COMMAND;
     let (escape, up, down, enter, reveal, copy) = ui.input_mut(|i| {
         let copy = copy_path_pressed(&i.events, i.modifiers.shift);
@@ -679,6 +686,7 @@ fn draw(ui: &mut egui::Ui, shared: &mut Shared) {
     if reveal && !shared.results.is_empty() {
         chosen = Some((shared.selected, true));
     }
+    let copy = copy || (plain_copy && !field_selection);
     if copy && let Some(row) = shared.results.get(shared.selected) {
         let text = match &row.kind {
             RowKind::App(app) => app

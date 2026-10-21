@@ -40,16 +40,110 @@ fn main() -> eframe::Result {
     } else {
         viewport.with_decorations(false)
     };
+    run(viewport)
+}
+
+/// Opens the window and runs Explorist until it quits.
+#[cfg(not(windows))]
+fn run(viewport: egui::ViewportBuilder) -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport,
         ..Default::default()
     };
-
     eframe::run_native(
         "Explorist",
         options,
         Box::new(|cc| Ok(Box::new(ExploristApp::new(cc)))),
     )
+}
+
+/// Opens the window and runs Explorist until it quits. It draws with OpenGL,
+/// but PCs without a graphics driver, and some virtual machines and Remote
+/// Desktop sessions, only have OpenGL 1.1, which is too old. There it draws
+/// with Direct3D 12 instead, which Windows runs in software when it has to.
+/// A file in the cache remembers which one worked, so later starts try that
+/// one first.
+#[cfg(windows)]
+fn run(viewport: egui::ViewportBuilder) -> eframe::Result {
+    use eframe::Renderer;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    // Set once the window and its graphics are up and the app is made, so
+    // an error after that isn't taken for missing graphics.
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    let marker = dirs::cache_dir().map(|d| d.join("Explorist").join("use-direct3d"));
+    let direct3d_before = marker.as_ref().is_some_and(|m| m.exists());
+    let order = if direct3d_before {
+        [Renderer::Wgpu, Renderer::Glow]
+    } else {
+        [Renderer::Glow, Renderer::Wgpu]
+    };
+    let mut details = String::new();
+    let mut last = None;
+    for renderer in order {
+        let options = eframe::NativeOptions {
+            viewport: viewport.clone(),
+            renderer,
+            ..Default::default()
+        };
+        let marker = marker.as_deref();
+        let result = eframe::run_native(
+            "Explorist",
+            options,
+            Box::new(move |cc| {
+                STARTED.store(true, Ordering::Relaxed);
+                let direct3d = renderer == Renderer::Wgpu;
+                if let Some(marker) = marker
+                    && direct3d != direct3d_before
+                {
+                    let _ = if direct3d {
+                        marker
+                            .parent()
+                            .map_or(Ok(()), std::fs::create_dir_all)
+                            .and_then(|()| std::fs::write(marker, b""))
+                    } else {
+                        std::fs::remove_file(marker)
+                    };
+                }
+                Ok(Box::new(ExploristApp::new(cc)))
+            }),
+        );
+        match result {
+            Err(err) if !STARTED.load(Ordering::Relaxed) => {
+                let name = match renderer {
+                    Renderer::Glow => "OpenGL",
+                    Renderer::Wgpu => "Direct3D 12",
+                };
+                details.push_str(&format!("\n{name}: {err}"));
+                last = Some(err);
+            }
+            result => return result,
+        }
+    }
+    graphics_too_old(&details);
+    last.map_or(Ok(()), Err)
+}
+
+/// Says why Explorist can't open: there's no console to show the error in.
+#[cfg(windows)]
+fn graphics_too_old(details: &str) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+
+    let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let text = wide(&format!(
+        "Explorist can't open because this PC's graphics can't draw it: it needs \
+         OpenGL 2.0 or Direct3D 12.\n\nInstalling or updating the graphics driver \
+         usually fixes this.\n{details}"
+    ));
+    let title = wide("Explorist");
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONERROR,
+        );
+    }
 }
 
 /// The window and taskbar icon.

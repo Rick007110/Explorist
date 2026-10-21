@@ -53,6 +53,11 @@ libc = "0.2"
 ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
 
 [target.'cfg(windows)'.dependencies]
+# A second renderer for PCs whose OpenGL is too old (no graphics driver,
+# some virtual machines and Remote Desktop): Direct3D 12, which Windows can
+# run in software when there's no graphics card. Only DX12, to stay small.
+eframe = { version = "0.36", default-features = false, features = ["wgpu_no_default_features"] }
+wgpu = { version = "30", default-features = false, features = ["dx12", "std", "wgsl"] }
 # Windows' own TLS: uses the system certificate store, nothing to compile.
 ureq = { version = "3", default-features = false, features = ["native-tls"] }
 windows-sys = { version = "0.61", features = [
