@@ -16,7 +16,7 @@ use crate::app::commands::Command;
 use crate::fs::entry::Entry;
 use crate::fs::git::FileState as GitState;
 use crate::fs::kind::FileKind;
-use crate::fs::thumbs::Thumbnailer;
+use crate::fs::thumbs::{Thumbnailer, shows_thumbnail};
 use crate::ui::theme::{radius, text};
 
 /// Narrowest a tile gets before a column is dropped.
@@ -42,7 +42,7 @@ pub struct ThumbCache {
 
 impl ThumbCache {
     /// Takes in finished thumbnails, and starts over in a new folder.
-    fn update(&mut self, ctx: &egui::Context, folder: &Path) {
+    pub(super) fn update(&mut self, ctx: &egui::Context, folder: &Path) {
         // Thumbnails stay in memory across folders, so going back is
         // instant; the queue is only for the folder on screen.
         if self.folder != folder {
@@ -81,7 +81,7 @@ impl ThumbCache {
     }
 
     /// The thumbnail for `entry`, asking for it when it's missing or stale.
-    fn get(&mut self, ctx: &egui::Context, entry: &Entry) -> Option<&TextureHandle> {
+    pub(super) fn get(&mut self, ctx: &egui::Context, entry: &Entry) -> Option<&TextureHandle> {
         let fresh = self
             .textures
             .get(&entry.path)
@@ -98,6 +98,53 @@ impl ThumbCache {
         }
         self.textures.get(&entry.path)?.1.as_ref()
     }
+}
+
+/// Draws a thumbnail as large as fits in `room` (never enlarged), with a
+/// thin border. Returns where it went.
+pub(super) fn paint_thumbnail(
+    ui: &egui::Ui,
+    p: &crate::ui::theme::Palette,
+    texture: &TextureHandle,
+    room: Rect,
+    dim: bool,
+) -> Rect {
+    let size = texture.size_vec2();
+    let scale = (room.width() / size.x).min(room.height() / size.y).min(1.0);
+    let shown = Rect::from_center_size(room.center(), size * scale);
+    let tint = if dim {
+        Color32::from_white_alpha(140)
+    } else {
+        Color32::WHITE
+    };
+    egui::Image::new(texture)
+        .corner_radius(CornerRadius::same(radius::XS))
+        .tint(tint)
+        .paint_at(ui, shown);
+    ui.painter().rect_stroke(
+        shown,
+        CornerRadius::same(radius::XS),
+        Stroke::new(1.0, p.border_subtle),
+        StrokeKind::Outside,
+    );
+    shown
+}
+
+/// A small play button on a video's thumbnail, so it reads as a video.
+fn play_badge(painter: &egui::Painter, thumb: Rect) {
+    let r = 9.0;
+    let c = thumb.right_bottom() - vec2(r + 4.0, r + 4.0);
+    painter.circle_filled(c, r, Color32::from_black_alpha(150));
+    let s = r * 0.45;
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            c + vec2(-s * 0.7, -s),
+            c + vec2(-s * 0.7, s),
+            c + vec2(s, 0.0),
+        ],
+        Color32::WHITE,
+        Stroke::NONE,
+    ));
 }
 
 pub fn tiles(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Command>) {
@@ -241,30 +288,16 @@ fn tile(
         rect.min + vec2(10.0, 10.0),
         vec2(rect.width() - 20.0, ART_HEIGHT),
     );
-    let thumb = if entry.kind == FileKind::Image {
+    let thumb = if shows_thumbnail(entry.kind) {
         app.thumbs.get(ui.ctx(), &entry).cloned()
     } else {
         None
     };
     if let Some(texture) = thumb {
-        let size = texture.size_vec2();
-        let scale = (art.width() / size.x).min(art.height() / size.y).min(1.0);
-        let shown = Rect::from_center_size(art.center(), size * scale);
-        let tint = if dim {
-            Color32::from_white_alpha(140)
-        } else {
-            Color32::WHITE
-        };
-        egui::Image::new(&texture)
-            .corner_radius(CornerRadius::same(radius::XS))
-            .tint(tint)
-            .paint_at(ui, shown);
-        ui.painter().rect_stroke(
-            shown,
-            CornerRadius::same(radius::XS),
-            Stroke::new(1.0, p.border_subtle),
-            StrokeKind::Outside,
-        );
+        let shown = paint_thumbnail(ui, &p, &texture, art, dim);
+        if entry.kind == FileKind::Video {
+            play_badge(ui.painter(), shown);
+        }
     } else {
         let color = if entry.is_dir {
             if dim { p.faint } else { p.accent }

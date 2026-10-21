@@ -15,6 +15,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::fs::kind::FileKind;
+
 /// Thumbnails fit this square.
 pub const SIDE: u32 = 128;
 /// Don't decode images larger than this.
@@ -34,21 +36,53 @@ pub struct Thumb {
     pub pixels: Vec<u8>,
 }
 
-/// Decodes `path` and scales it to fit [`SIDE`]. `None` for files that
-/// aren't images we can read.
+/// Whether files of this kind get thumbnails.
+pub fn shows_thumbnail(kind: FileKind) -> bool {
+    matches!(kind, FileKind::Image | FileKind::Video)
+}
+
+fn kind_of(path: &Path) -> FileKind {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_default();
+    crate::fs::kind::classify(&name, false).0
+}
+
+/// Makes `path`'s thumbnail, scaled to fit [`SIDE`]: images decoded here,
+/// videos (and images we can't read, like HEIC) from the system. `None`
+/// for files with no picture to show.
 pub fn make(path: &Path) -> Option<Thumb> {
-    if fs::metadata(path).ok()?.len() > MAX_BYTES {
-        return None;
-    }
-    let mut image = image::open(path).ok()?;
-    if image.width() > SIDE || image.height() > SIDE {
-        image = image.thumbnail(SIDE, SIDE);
-    }
-    let image = image.to_rgba8();
+    let image = if kind_of(path) == FileKind::Video {
+        super::system_thumbs::thumbnail(path, SIDE)?
+    } else {
+        let ours = (fs::metadata(path).ok()?.len() <= MAX_BYTES)
+            .then(|| image::open(path).ok())
+            .flatten()
+            .map(|i| i.to_rgba8());
+        match ours {
+            Some(image) => image,
+            None => super::system_thumbs::thumbnail(path, SIDE)?,
+        }
+    };
+    let image = if image.width() > SIDE || image.height() > SIDE {
+        image::DynamicImage::ImageRgba8(image)
+            .thumbnail(SIDE, SIDE)
+            .to_rgba8()
+    } else {
+        image
+    };
     Some(Thumb {
         size: [image.width() as usize, image.height() as usize],
         pixels: image.into_raw(),
     })
+}
+
+/// Whether a missing thumbnail is worth remembering: not for a video when
+/// there's nothing here that reads videos yet (installing ffmpeg on Linux
+/// should bring them).
+fn remember_missing(path: &Path) -> bool {
+    kind_of(path) != FileKind::Video || super::system_thumbs::available()
 }
 
 /// Thumbnails saved on disk, one small PNG each, named after a hash of the
@@ -215,7 +249,9 @@ fn cached_or_make(cache: Option<&DiskCache>, path: &Path) -> Option<Thumb> {
         return saved;
     }
     let thumb = make(path);
-    let _ = cache.put(path, &meta, thumb.as_ref());
+    if thumb.is_some() || remember_missing(path) {
+        let _ = cache.put(path, &meta, thumb.as_ref());
+    }
     thumb
 }
 
@@ -420,6 +456,35 @@ mod tests {
         cache.clear().unwrap();
         assert_eq!(cache.size(), 0);
         cache.clear().unwrap();
+    }
+
+    /// Needs ffmpeg to make the test video and read it back, so it's
+    /// skipped where there's none.
+    #[test]
+    fn videos_get_a_frame() {
+        if !crate::fs::system_thumbs::available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("clip.mp4");
+        let made = std::process::Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=640x360:rate=10",
+            ])
+            .args(["-t", "1", "-pix_fmt", "yuv420p"])
+            .arg(&video)
+            .status();
+        if !made.is_ok_and(|s| s.success()) {
+            return;
+        }
+        let thumb = make(&video).unwrap();
+        assert_eq!(thumb.size, [128, 72]);
+        assert!(shows_thumbnail(kind_of(&video)));
     }
 
     #[test]

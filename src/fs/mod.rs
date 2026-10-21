@@ -23,6 +23,7 @@ pub mod preview;
 pub mod props;
 pub mod shell;
 pub mod sort;
+pub mod system_thumbs;
 pub mod thumbs;
 pub mod volumes;
 pub mod watch;

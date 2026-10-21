@@ -139,6 +139,13 @@ fn by_extension(ext: &str) -> Option<(FileKind, &'static str)> {
         "mov" => (Video, "QuickTime video"),
         "avi" => (Video, "AVI video"),
         "webm" => (Video, "WebM video"),
+        "m4v" => (Video, "M4V video"),
+        "wmv" => (Video, "Windows Media video"),
+        "flv" => (Video, "Flash video"),
+        "mpg" | "mpeg" => (Video, "MPEG video"),
+        "3gp" => (Video, "3GP video"),
+        "m2ts" => (Video, "AVCHD video"),
+        "ogv" => (Video, "Ogg video"),
 
         "exe" => (Executable, "Application"),
         "msi" => (Executable, "Windows installer"),

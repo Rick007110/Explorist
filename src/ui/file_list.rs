@@ -288,6 +288,8 @@ fn rows(ui: &mut egui::Ui, app: &mut ExploristApp, commands: &mut Vec<Command>) 
     let row_h = row_height(app.settings.density);
     let step = row_h + ROW_GAP;
     let count = app.browser.rows().len();
+    let location = app.browser.location().to_path_buf();
+    app.thumbs.update(ui.ctx(), &location);
 
     let area = ui.available_rect_before_wrap();
     // Clicks and right-clicks on empty space below the rows.
@@ -420,9 +422,23 @@ fn draw_row(
         Pos2::new(name_cell.left(), rect.center().y - 8.0),
         vec2(16.0, 16.0),
     );
-    crate::ui::folder_icon::paint_entry_icon(
-        painter, app, icon_rect, &entry, 16.0, None, icon_color, dim,
-    );
+    // Images and videos show a small thumbnail in place of the icon,
+    // once it's ready.
+    let thumb = if crate::fs::thumbs::shows_thumbnail(entry.kind) {
+        app.thumbs.get(ui.ctx(), &entry).cloned()
+    } else {
+        None
+    };
+    match thumb {
+        Some(texture) => {
+            let side = (row_h - 6.0).min(24.0);
+            let room = Rect::from_center_size(icon_rect.center(), vec2(side, side));
+            super::grid::paint_thumbnail(ui, &p, &texture, room, dim);
+        }
+        None => crate::ui::folder_icon::paint_entry_icon(
+            painter, app, icon_rect, &entry, 16.0, None, icon_color, dim,
+        ),
+    }
     let name_rect = Rect::from_min_max(
         Pos2::new(icon_rect.right() + 10.0, rect.top()),
         Pos2::new(name_cell.right(), rect.bottom()),
