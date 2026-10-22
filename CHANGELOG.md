@@ -4,6 +4,23 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
+## 0.4.0
+
+### New
+- **Quick search**: press **Alt Space** (Option Space on macOS) in any app to pop up a search box over everything and find any app or file on this device as you type, like Spotlight or Raycast. Apps come first, with their icons: on Windows every app in the Start menu (Store apps like Calculator and Settings included), on macOS the Applications folders, on Linux your desktop's app menu; type part of the name or its initials ("vsc" for Visual Studio Code). **Enter** starts the app or opens the file (a folder opens in Explorist), **Ctrl Enter** (⌘ Enter) shows it in Explorist, **Ctrl Shift C** copies its path (so does **Ctrl C**, unless you've selected text in the box), **Esc** closes. With nothing typed, it lists your recent folders. It's also in the tray icon's menu. Choose other keys, leave apps out, or turn it off in Settings → General. It works while Explorist is running, which with Close to tray means always. On Linux with Wayland, where apps can't set up such shortcuts, add one in your desktop's keyboard settings that runs `explorist --search`.
+- **Beta versions**: turn on **Get beta versions** in Settings → General → Updates to be offered test versions of what's coming, so you can try new features before everyone else. Betas may have more bugs. It's off unless you turn it on, and turned off again, you keep your version until the next full release.
+
+### Changed
+- **Quick Look on a folder shows what's in it**: its folders and files with their sizes and dates, instead of only a large folder icon.
+- **Searching everywhere is faster and ready at once**: the list of every file name on the device is saved between runs, so searches work right after Explorist starts, and it's refreshed in the background without the results going away meanwhile. Searching it is several times faster: a few milliseconds even with millions of files.
+- **Explorist is now open source** under the GNU General Public License v3 (or later): you're free to use, study, change and share it.
+
+### Fixed
+- On Windows PCs whose graphics only offer the old OpenGL 1.1 (no graphics driver installed, and some virtual machines and Remote Desktop sessions), Explorist closed straight away without a word. Now it draws with Direct3D 12 there, which Windows can run without a graphics card, and remembers that for next time. If that doesn't work either, a message explains why it can't open.
+- Clicking the tray icon, or opening Explorist again, might not bring back the window hidden in the tray on Windows.
+- File names showed only as "…" when the window was narrow, as on smaller screens or with display scaling, with the preview panel open. Now the Type, Modified and Size columns make way for the name, in that order.
+- After clicking **Edit** for a keyboard shortcut (Settings → Keyboard), leaving Settings without pressing keys made the next shortcut you pressed anywhere in Explorist become that shortcut.
+
 ## 0.4.0-beta3
 
 A third test version of 0.4.0, with two fixes from testing 0.4.0-beta2. If you turned on Get beta versions, 0.4.0-beta2 offers it as an update.
