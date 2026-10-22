@@ -357,7 +357,7 @@ pub fn rename_all(pairs: &[(PathBuf, String)]) -> Outcome {
     Outcome {
         done,
         failed,
-        cancelled: false,
+        ..Outcome::default()
     }
 }
 

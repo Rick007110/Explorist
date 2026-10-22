@@ -6,7 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -21,10 +21,23 @@ pub enum TransferKind {
     Move,
 }
 
+/// What to do about files that are already where others are going.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Existing {
+    /// Send the ones there to the Recycle Bin and put the new ones in place.
+    Replace,
+    /// Leave the ones there, and the new ones where they were.
+    Skip,
+    /// Put the new ones beside them under a "- Copy" name.
+    KeepBoth,
+}
+
 /// What a job should do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Work {
-    /// Copy or move each `(from, to)` pair. Destinations must not exist.
+    /// Copy or move each `(from, to)` pair. A destination that exists is
+    /// a folder of the same name to put the contents into, or a file of
+    /// the same name; the job asks what to do about those.
     Transfer {
         kind: TransferKind,
         pairs: Vec<(PathBuf, PathBuf)>,
@@ -46,7 +59,10 @@ pub enum Work {
 impl Work {
     /// Plans copying or moving `sources` into `dest_dir`. Moves within the
     /// same folder are dropped; copies there get a "- Copy" name, as in
-    /// Explorer. Fails for a folder moved or copied into itself.
+    /// Explorer. A folder whose name is taken by a folder goes into it, and
+    /// a file whose name is taken by a file waits for the person's choice;
+    /// a folder and a file of the same name are both kept. Fails for a
+    /// folder moved or copied into itself.
     pub fn transfer(
         kind: TransferKind,
         sources: &[PathBuf],
@@ -69,7 +85,12 @@ impl Work {
                 continue;
             }
             let name = name.to_string_lossy();
-            let dst = free_name(dest_dir, &name, same_folder, &taken);
+            let plain = dest_dir.join(&*name);
+            let dst = if !same_folder && !taken.contains(&plain) && same_kind_or_free(src, &plain) {
+                plain
+            } else {
+                free_name(dest_dir, &name, same_folder, &taken)
+            };
             taken.push(dst.clone());
             pairs.push((src.clone(), dst));
         }
@@ -124,6 +145,40 @@ impl Work {
     }
 }
 
+/// Whether `dst` is free, or the same kind of thing as `src`: both folders
+/// or both files.
+fn same_kind_or_free(src: &Path, dst: &Path) -> bool {
+    match fs::symlink_metadata(dst) {
+        Err(_) => true,
+        Ok(there) => fs::symlink_metadata(src).is_ok_and(|from| from.is_dir() == there.is_dir()),
+    }
+}
+
+/// The files already where `pairs` would put files, looking inside folders
+/// of the same name too, as those get merged.
+fn clashes(pairs: &[(PathBuf, PathBuf)]) -> Vec<PathBuf> {
+    fn walk(src: &Path, dst: &Path, found: &mut Vec<PathBuf>) {
+        let (Ok(from), Ok(there)) = (fs::symlink_metadata(src), fs::symlink_metadata(dst)) else {
+            return;
+        };
+        match (from.is_dir(), there.is_dir()) {
+            (true, true) => {
+                for child in fs::read_dir(src).into_iter().flatten().flatten() {
+                    walk(&child.path(), &dst.join(child.file_name()), found);
+                }
+            }
+            (false, false) => found.push(dst.to_path_buf()),
+            // A folder and a file: both are kept.
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    for (src, dst) in pairs {
+        walk(src, dst, &mut found);
+    }
+    found
+}
+
 /// A destination path in `dir` that isn't taken: `name`, or for copies
 /// into the same folder or onto an existing name, "stem - Copy.ext",
 /// "stem - Copy (2).ext"...
@@ -176,15 +231,27 @@ impl Progress {
 /// How a job ended.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Outcome {
-    /// Pairs fully transferred, or paths trashed/deleted.
+    /// Pairs fully transferred, or paths trashed/deleted. Inside merged
+    /// folders, each item that went in.
     pub done: Vec<(PathBuf, PathBuf)>,
     pub failed: Vec<(PathBuf, String)>,
     pub cancelled: bool,
+    /// Folders put into a folder of the same name: `(from, into)`.
+    pub merged: Vec<(PathBuf, PathBuf)>,
+    /// Files that were replaced, now in the Recycle Bin.
+    pub replaced: Vec<PathBuf>,
+    /// The Recycle Bin items they became, to put exactly those back.
+    pub replaced_in_bin: Vec<trash::TrashItem>,
+    /// Files left out because one was already there.
+    pub skipped: usize,
 }
 
 #[derive(Debug)]
 pub enum JobEvent {
     Progress(Progress),
+    /// Files already where others are going: the job waits for
+    /// [`Job::answer`].
+    Existing(Vec<PathBuf>),
     Finished(Outcome),
 }
 
@@ -192,6 +259,9 @@ pub enum JobEvent {
 pub struct Job {
     pub work: Work,
     events: Receiver<JobEvent>,
+    answers: Sender<Existing>,
+    /// Files already there, while the job waits to hear what to do.
+    asking: Option<Vec<PathBuf>>,
     cancelled: Arc<AtomicBool>,
     progress: Progress,
 }
@@ -199,9 +269,11 @@ pub struct Job {
 impl Job {
     pub fn start(work: Work, wake: impl Fn() + Send + 'static) -> Self {
         let (tx, events) = mpsc::channel();
+        let (answers, answer_rx) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
         let mut runner = Runner {
             tx,
+            answers: answer_rx,
             cancelled: Arc::clone(&cancelled),
             wake: Box::new(wake),
             progress: Progress {
@@ -225,12 +297,26 @@ impl Job {
             },
             work,
             events,
+            answers,
+            asking: None,
             cancelled,
         }
     }
 
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Relaxed);
+    }
+
+    /// The files already there, while the job waits for [`Job::answer`].
+    pub fn asking(&self) -> Option<&[PathBuf]> {
+        self.asking.as_deref()
+    }
+
+    /// What to do about the files already there. Can be given before the
+    /// job asks.
+    pub fn answer(&mut self, choice: Existing) {
+        self.asking = None;
+        let _ = self.answers.send(choice);
     }
 
     pub fn progress(&self) -> &Progress {
@@ -242,6 +328,7 @@ impl Job {
         while let Ok(event) = self.events.try_recv() {
             match event {
                 JobEvent::Progress(p) => self.progress = p,
+                JobEvent::Existing(paths) => self.asking = Some(paths),
                 JobEvent::Finished(outcome) => return Some(outcome),
             }
         }
@@ -253,6 +340,8 @@ impl Job {
         loop {
             match self.events.recv() {
                 Ok(JobEvent::Progress(p)) => self.progress = p,
+                // Waits for an answer given with `answer` beforehand.
+                Ok(JobEvent::Existing(_)) => {}
                 Ok(JobEvent::Finished(outcome)) => return outcome,
                 Err(_) => {
                     return Outcome {
@@ -267,6 +356,7 @@ impl Job {
 
 struct Runner {
     tx: Sender<JobEvent>,
+    answers: Receiver<Existing>,
     cancelled: Arc<AtomicBool>,
     wake: Box<dyn Fn() + Send>,
     progress: Progress,
@@ -291,10 +381,51 @@ impl Runner {
         self.cancelled.load(Ordering::Relaxed)
     }
 
+    /// Asks what to do about files already there; `None` if cancelled.
+    fn ask(&self, existing: Vec<PathBuf>) -> Option<Existing> {
+        self.send(JobEvent::Existing(existing));
+        loop {
+            if self.is_cancelled() {
+                return None;
+            }
+            match self.answers.recv_timeout(Duration::from_millis(100)) {
+                Ok(choice) => return Some(choice),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return None,
+            }
+        }
+    }
+
     fn run(&mut self, work: Work) -> Outcome {
         let mut outcome = Outcome::default();
         match work {
             Work::Transfer { kind, pairs } => {
+                let existing = clashes(&pairs);
+                let mut choice = Existing::KeepBoth;
+                if !existing.is_empty() {
+                    match self.ask(existing.clone()) {
+                        Some(answer) => choice = answer,
+                        None => {
+                            outcome.cancelled = true;
+                            return outcome;
+                        }
+                    }
+                }
+                if choice == Existing::Replace {
+                    match ops::trash_remembering(&existing) {
+                        Ok(items) => {
+                            outcome.replaced = existing;
+                            outcome.replaced_in_bin = items;
+                        }
+                        Err(err) => {
+                            outcome.failed = existing
+                                .into_iter()
+                                .map(|path| (path, format!("couldn’t replace it: {err}")))
+                                .collect();
+                            return outcome;
+                        }
+                    }
+                }
                 if kind == TransferKind::Copy {
                     self.progress.bytes_total = pairs.iter().map(|(src, _)| tree_size(src)).sum();
                     self.report(true);
@@ -305,15 +436,9 @@ impl Runner {
                         break;
                     }
                     self.progress.current = display_name(&src);
-                    let result = match kind {
-                        TransferKind::Copy => self.copy_tree(&src, &dst),
-                        TransferKind::Move => self.move_item(&src, &dst),
-                    };
-                    match result {
-                        Ok(()) => outcome.done.push((src, dst)),
+                    match self.transfer_item(kind, &src, &dst, choice, &mut outcome) {
+                        Ok(()) => {}
                         Err(err) if err.kind() == io::ErrorKind::Interrupted => {
-                            // Cancelled midway: drop the partial copy.
-                            let _ = ops::delete_permanently(std::slice::from_ref(&dst));
                             outcome.cancelled = true;
                             break;
                         }
@@ -399,6 +524,75 @@ impl Runner {
         self.progress.items_done = self.progress.items_total;
     }
 
+    /// Copies or moves `src` to `dst`. Into a new place it goes whole; into
+    /// a folder of the same name, item by item; past a file of the same
+    /// name as `choice` says. Records each item that went in `outcome`, so
+    /// undo and cancel only ever touch those, never what was there.
+    /// Returns `Interrupted` if cancelled.
+    fn transfer_item(
+        &mut self,
+        kind: TransferKind,
+        src: &Path,
+        dst: &Path,
+        choice: Existing,
+        outcome: &mut Outcome,
+    ) -> io::Result<()> {
+        if self.is_cancelled() {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
+        let Ok(there) = fs::symlink_metadata(dst) else {
+            let result = match kind {
+                TransferKind::Copy => self.copy_tree(src, dst),
+                TransferKind::Move => self.move_item(src, dst),
+            };
+            return match result {
+                Ok(()) => {
+                    outcome.done.push((src.to_path_buf(), dst.to_path_buf()));
+                    Ok(())
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {
+                    // Cancelled midway: drop the partial copy, which is new.
+                    let _ = ops::delete_permanently(&[dst.to_path_buf()]);
+                    Err(err)
+                }
+                Err(err) => {
+                    outcome.failed.push((src.to_path_buf(), err.to_string()));
+                    Ok(())
+                }
+            };
+        };
+        let from_dir = fs::symlink_metadata(src)?.is_dir();
+        if from_dir && there.is_dir() {
+            // Only the outermost folder counts as merged.
+            if outcome
+                .merged
+                .iter()
+                .all(|(_, into)| !dst.starts_with(into))
+            {
+                outcome.merged.push((src.to_path_buf(), dst.to_path_buf()));
+            }
+            for child in fs::read_dir(src)? {
+                let child = child?;
+                let target = dst.join(child.file_name());
+                self.transfer_item(kind, &child.path(), &target, choice, outcome)?;
+            }
+            if kind == TransferKind::Move {
+                // Empty now, unless something was skipped or failed.
+                let _ = fs::remove_dir(src);
+            }
+            return Ok(());
+        }
+        if from_dir == there.is_dir() && choice == Existing::Skip {
+            outcome.skipped += 1;
+            return Ok(());
+        }
+        // Keep both, also for a folder and a file of the same name.
+        let dir = dst.parent().unwrap_or(dst);
+        let name = display_name(dst);
+        let beside = free_name(dir, &name, false, &[]);
+        self.transfer_item(kind, src, &beside, choice, outcome)
+    }
+
     /// Copies a file or a whole folder. Returns `Interrupted` if cancelled.
     fn copy_tree(&mut self, src: &Path, dst: &Path) -> io::Result<()> {
         if self.is_cancelled() {
@@ -427,6 +621,10 @@ impl Runner {
     fn move_item(&mut self, src: &Path, dst: &Path) -> io::Result<()> {
         if fs::symlink_metadata(dst).is_ok() {
             return Err(io::ErrorKind::AlreadyExists.into());
+        }
+        // Moving back out of a merged folder: its old folder may be gone.
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent)?;
         }
         match fs::rename(src, dst) {
             Ok(()) => Ok(()),
@@ -462,6 +660,22 @@ mod tests {
 
     fn run(work: Work) -> Outcome {
         Job::start(work, || {}).wait()
+    }
+
+    /// Runs a job that will ask about files already there.
+    fn run_answering(work: Work, choice: Existing) -> Outcome {
+        let mut job = Job::start(work, || {});
+        job.answer(choice);
+        job.wait()
+    }
+
+    /// `dest/src` already there, holding `a.txt` (a clash) and `keep.txt`.
+    fn tree_with_dest_src() -> tempfile::TempDir {
+        let dir = tree();
+        fs::create_dir(dir.path().join("dest/src")).unwrap();
+        fs::write(dir.path().join("dest/src/a.txt"), b"old").unwrap();
+        fs::write(dir.path().join("dest/src/keep.txt"), b"k").unwrap();
+        dir
     }
 
     fn tree() -> tempfile::TempDir {
@@ -535,12 +749,138 @@ mod tests {
             &dir.path().join("dest"),
         )
         .unwrap();
-        run(work);
+        run_answering(work, Existing::KeepBoth);
         assert_eq!(
             fs::read(dir.path().join("dest/notes.md")).unwrap(),
             b"keep me"
         );
         assert!(dir.path().join("dest/notes - Copy.md").exists());
+    }
+
+    #[test]
+    fn folders_go_into_folders_of_the_same_name() {
+        let dir = tree_with_dest_src();
+        let work = Work::transfer(
+            TransferKind::Copy,
+            &[dir.path().join("src")],
+            &dir.path().join("dest"),
+        )
+        .unwrap();
+        let Work::Transfer { pairs, .. } = &work else {
+            unreachable!()
+        };
+        assert_eq!(pairs[0].1, dir.path().join("dest/src"), "not a copy name");
+
+        let mut job = Job::start(work, || {});
+        let asked = loop {
+            job.poll();
+            if let Some(paths) = job.asking() {
+                break paths.to_vec();
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(asked, [dir.path().join("dest/src/a.txt")]);
+        job.answer(Existing::Skip);
+        let outcome = job.wait();
+
+        let dest = dir.path().join("dest/src");
+        assert_eq!(fs::read(dest.join("a.txt")).unwrap(), b"old", "skipped");
+        assert_eq!(fs::read(dest.join("keep.txt")).unwrap(), b"k", "untouched");
+        assert_eq!(fs::read(dest.join("nested/b.txt")).unwrap(), b"bb");
+        assert!(!dir.path().join("dest/src - Copy").exists());
+        assert_eq!(outcome.skipped, 1);
+        assert_eq!(outcome.merged, [(dir.path().join("src"), dest.clone())]);
+        // Only what went in counts as done, so undo never takes the
+        // folder that was there.
+        assert_eq!(
+            outcome.done,
+            [(dir.path().join("src/nested"), dest.join("nested"))]
+        );
+    }
+
+    #[test]
+    fn keep_both_inside_a_merged_folder() {
+        let dir = tree_with_dest_src();
+        let work = Work::transfer(
+            TransferKind::Copy,
+            &[dir.path().join("src")],
+            &dir.path().join("dest"),
+        )
+        .unwrap();
+        run_answering(work, Existing::KeepBoth);
+        let dest = dir.path().join("dest/src");
+        assert_eq!(fs::read(dest.join("a.txt")).unwrap(), b"old");
+        assert_eq!(fs::read(dest.join("a - Copy.txt")).unwrap(), b"aaaa");
+    }
+
+    #[test]
+    fn moving_into_a_folder_of_the_same_name_and_back() {
+        let dir = tree_with_dest_src();
+        let src = dir.path().join("src");
+        let work = Work::transfer(
+            TransferKind::Move,
+            std::slice::from_ref(&src),
+            &dir.path().join("dest"),
+        )
+        .unwrap();
+        let outcome = run_answering(work, Existing::KeepBoth);
+        assert!(outcome.failed.is_empty(), "{outcome:?}");
+        assert!(!src.exists(), "the emptied folder is gone");
+        let dest = dir.path().join("dest/src");
+        assert!(dest.join("nested/b.txt").exists());
+        assert!(dest.join("a - Copy.txt").exists());
+
+        // Undo moves each item back, making the folder again.
+        let back: Vec<_> = outcome
+            .done
+            .iter()
+            .map(|(a, b)| (b.clone(), a.clone()))
+            .collect();
+        let undone = run(Work::Transfer {
+            kind: TransferKind::Move,
+            pairs: back,
+        });
+        assert!(undone.failed.is_empty(), "{undone:?}");
+        assert_eq!(fs::read(src.join("a.txt")).unwrap(), b"aaaa");
+        assert!(src.join("nested/b.txt").exists());
+        assert_eq!(fs::read(dest.join("a.txt")).unwrap(), b"old");
+        assert!(dest.join("keep.txt").exists());
+    }
+
+    #[test]
+    fn cancelling_the_question_changes_nothing() {
+        let dir = tree_with_dest_src();
+        let job = Job::start(
+            Work::transfer(
+                TransferKind::Move,
+                &[dir.path().join("src")],
+                &dir.path().join("dest"),
+            )
+            .unwrap(),
+            || {},
+        );
+        job.cancel();
+        let outcome = job.wait();
+        assert!(outcome.cancelled);
+        assert!(outcome.done.is_empty());
+        assert!(dir.path().join("src/a.txt").exists());
+        assert_eq!(fs::read(dir.path().join("dest/src/a.txt")).unwrap(), b"old");
+    }
+
+    #[test]
+    fn a_folder_and_a_file_of_the_same_name_are_both_kept() {
+        let dir = tree();
+        fs::write(dir.path().join("dest/src"), b"a file").unwrap();
+        let work = Work::transfer(
+            TransferKind::Copy,
+            &[dir.path().join("src")],
+            &dir.path().join("dest"),
+        )
+        .unwrap();
+        let outcome = run(work);
+        assert!(outcome.failed.is_empty(), "{outcome:?}");
+        assert_eq!(fs::read(dir.path().join("dest/src")).unwrap(), b"a file");
+        assert!(dir.path().join("dest/src - Copy/a.txt").exists());
     }
 
     #[test]

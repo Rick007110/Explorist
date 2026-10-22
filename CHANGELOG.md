@@ -4,6 +4,11 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
+## Unreleased
+
+### Changed
+- **Folders go into folders of the same name**: dropping, pasting or moving a folder where one with the same name already is now puts its contents into that folder, as Windows does, instead of making "Name - Copy". When files with the same names are already there (or a file lands where one of the same name is), Explorist asks whether to **replace** them, **skip** them or **keep both**. Replaced files go to the Recycle Bin, and **Undo** puts everything back as it was.
+
 ## 0.4.0
 
 ### New

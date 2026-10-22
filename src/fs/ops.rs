@@ -210,6 +210,44 @@ pub fn move_to_trash(paths: &[PathBuf]) -> Result<(), OpError> {
     trash::delete_all(paths).map_err(|err| OpError::Trash(err.to_string()))
 }
 
+/// Moves items to the Recycle Bin and says which bin items they became,
+/// so [`restore_trashed`] can put back exactly those, even after more from
+/// the same places land in the bin. Empty where that isn't supported.
+pub fn trash_remembering(paths: &[PathBuf]) -> Result<Vec<trash::TrashItem>, OpError> {
+    move_to_trash(paths)?;
+    Ok(in_trash(paths))
+}
+
+#[cfg(target_os = "macos")]
+fn in_trash(_paths: &[PathBuf]) -> Vec<trash::TrashItem> {
+    Vec::new()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn in_trash(paths: &[PathBuf]) -> Vec<trash::TrashItem> {
+    let Ok(trashed) = trash::os_limited::list() else {
+        return Vec::new();
+    };
+    paths
+        .iter()
+        .filter_map(|path| find_in_trash(&trashed, path))
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+pub fn restore_trashed(_items: &[trash::TrashItem]) -> Result<(), OpError> {
+    Err(OpError::Trash(
+        "putting items back isn’t supported on macOS yet; use Put Back in Finder’s Trash"
+            .to_owned(),
+    ))
+}
+
+/// Puts back the bin items [`trash_remembering`] reported.
+#[cfg(not(target_os = "macos"))]
+pub fn restore_trashed(items: &[trash::TrashItem]) -> Result<(), OpError> {
+    trash::os_limited::restore_all(items.to_vec()).map_err(|err| OpError::Trash(err.to_string()))
+}
+
 #[cfg(target_os = "macos")]
 pub fn restore_from_trash(_paths: &[PathBuf]) -> Result<(), OpError> {
     Err(OpError::Trash(
@@ -225,30 +263,40 @@ pub fn restore_from_trash(paths: &[PathBuf]) -> Result<(), OpError> {
     let trashed = trash::os_limited::list().map_err(|err| OpError::Trash(err.to_string()))?;
     let mut found = Vec::with_capacity(paths.len());
     for path in paths {
-        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        if path.file_name().is_none() {
             continue;
-        };
-        let parent = comparable(parent);
-        let name = name.to_string_lossy();
-        // Windows reports names as Explorer shows them, so with "hide
-        // extensions for known file types" on, "notes.txt" comes back as
-        // "notes". Accept either.
-        let stem = path.file_stem().map(|s| s.to_string_lossy());
-        let mut item = trashed
-            .iter()
-            .filter(|item| comparable(&item.original_parent) == parent)
-            .filter(|item| {
-                let listed = item.name.to_string_lossy();
-                same_name(&listed, &name) || stem.as_deref().is_some_and(|s| same_name(&listed, s))
-            })
-            .max_by_key(|item| item.time_deleted)
-            .ok_or_else(|| OpError::Trash(format!("“{name}” is no longer in the Recycle Bin")))?
-            .clone();
-        // Restore under the real name, extension included.
-        item.name = path.file_name().unwrap_or_default().to_os_string();
-        found.push(item);
+        }
+        found.push(find_in_trash(&trashed, path).ok_or_else(|| {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            OpError::Trash(format!("“{name}” is no longer in the Recycle Bin"))
+        })?);
     }
     trash::os_limited::restore_all(found).map_err(|err| OpError::Trash(err.to_string()))
+}
+
+/// The most recently deleted bin item that was at `path`, with its real
+/// name for putting back.
+#[cfg(not(target_os = "macos"))]
+fn find_in_trash(trashed: &[trash::TrashItem], path: &Path) -> Option<trash::TrashItem> {
+    let (parent, name) = (path.parent()?, path.file_name()?);
+    let parent = comparable(parent);
+    let name = name.to_string_lossy();
+    // Windows reports names as Explorer shows them, so with "hide
+    // extensions for known file types" on, "notes.txt" comes back as
+    // "notes". Accept either.
+    let stem = path.file_stem().map(|s| s.to_string_lossy());
+    let mut item = trashed
+        .iter()
+        .filter(|item| comparable(&item.original_parent) == parent)
+        .filter(|item| {
+            let listed = item.name.to_string_lossy();
+            same_name(&listed, &name) || stem.as_deref().is_some_and(|s| same_name(&listed, s))
+        })
+        .max_by_key(|item| item.time_deleted)?
+        .clone();
+    // Restore under the real name, extension included.
+    item.name = path.file_name().unwrap_or_default().to_os_string();
+    Some(item)
 }
 
 #[cfg(not(target_os = "macos"))]

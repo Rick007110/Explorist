@@ -32,10 +32,12 @@ pub enum Action {
     /// Copies made; undo sends them to the Recycle Bin.
     Copy {
         created: Vec<PathBuf>,
+        replaced: Replaced,
     },
     /// `(from, to)` moves; undo moves them back.
     Move {
         pairs: Vec<(PathBuf, PathBuf)>,
+        replaced: Replaced,
     },
     /// A zip made, or a folder extracted; undo sends it to the Recycle Bin.
     Archive {
@@ -44,13 +46,54 @@ pub enum Action {
     },
 }
 
+/// Files a copy or move replaced, which went to the Recycle Bin. Undo puts
+/// them back once the new ones are out of the way.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Replaced {
+    pub paths: Vec<PathBuf>,
+    /// The bin items they became, so exactly those come back.
+    pub in_bin: Vec<trash::TrashItem>,
+}
+
+impl Replaced {
+    /// ", replacing 2 files", or nothing.
+    fn note(&self) -> String {
+        match self.paths.len() {
+            0 => String::new(),
+            n => format!(", replacing {}", plural(n, "file", "files")),
+        }
+    }
+
+    /// What undo says about them: put back, or still in the bin where
+    /// they can't be put back from here.
+    fn undo_note(&self) -> String {
+        let n = self.paths.len();
+        let them = if n == 1 {
+            "the file".to_owned()
+        } else {
+            format!("the {n} files")
+        };
+        if n == 0 {
+            String::new()
+        } else if self.in_bin.len() == n {
+            format!(", and put back {them} it replaced")
+        } else {
+            let verb = if n == 1 { "is" } else { "are" };
+            let mut them = them;
+            them[..1].make_ascii_uppercase();
+            format!(". {them} it replaced {verb} in the Recycle Bin")
+        }
+    }
+}
+
 /// What undoing takes.
 #[derive(Debug)]
 pub enum Undo {
     /// Done already, with the toast text or the error.
     Done(Result<String, OpError>),
-    /// Needs a background job; the text is the toast for when it finishes.
-    Job(Work, String),
+    /// Needs a background job; the text is the toast for when it finishes,
+    /// and the bin items are put back after it.
+    Job(Work, String, Vec<trash::TrashItem>),
 }
 
 impl Action {
@@ -64,16 +107,18 @@ impl Action {
                 [one] => format!("Moved “{}” to the Recycle Bin", file_name(one)),
                 many => format!("Moved {} items to the Recycle Bin", many.len()),
             },
-            Self::Copy { created } => format!(
-                "Copied {}{}",
+            Self::Copy { created, replaced } => format!(
+                "Copied {}{}{}",
                 count(created.len()),
-                to_folder(created.first())
+                to_folder(created.first()),
+                replaced.note()
             ),
             Self::BatchRename { pairs } => format!("Renamed {}", count(pairs.len())),
-            Self::Move { pairs } => format!(
-                "Moved {}{}",
+            Self::Move { pairs, replaced } => format!(
+                "Moved {}{}{}",
                 count(pairs.len()),
-                to_folder(pairs.first().map(|(_, to)| to))
+                to_folder(pairs.first().map(|(_, to)| to)),
+                replaced.note()
             ),
             Self::Archive {
                 created,
@@ -86,11 +131,16 @@ impl Action {
     /// Starts undoing: right away for quick actions, or as a job.
     pub fn begin_undo(&self) -> Undo {
         match self {
-            Self::Copy { created } => Undo::Job(
+            Self::Copy { created, replaced } => Undo::Job(
                 Work::Trash(created.clone()),
-                format!("Removed the {}", plural(created.len(), "copy", "copies")),
+                format!(
+                    "Removed the {}{}",
+                    plural(created.len(), "copy", "copies"),
+                    replaced.undo_note()
+                ),
+                replaced.in_bin.clone(),
             ),
-            Self::Move { pairs } => Undo::Job(
+            Self::Move { pairs, replaced } => Undo::Job(
                 Work::Transfer {
                     kind: TransferKind::Move,
                     pairs: pairs
@@ -98,11 +148,13 @@ impl Action {
                         .map(|(from, to)| (to.clone(), from.clone()))
                         .collect(),
                 },
-                format!("Moved {} back", count(pairs.len())),
+                format!("Moved {} back{}", count(pairs.len()), replaced.undo_note()),
+                replaced.in_bin.clone(),
             ),
             Self::Archive { created, .. } => Undo::Job(
                 Work::Trash(vec![created.clone()]),
                 format!("Removed “{}”", file_name(created)),
+                Vec::new(),
             ),
             other => Undo::Done(other.undo()),
         }
@@ -324,21 +376,46 @@ mod tests {
     fn copy_and_move_undo_in_the_background() {
         let copy = Action::Copy {
             created: vec![PathBuf::from("dest/a.txt")],
+            replaced: Replaced::default(),
         };
         assert!(
-            matches!(copy.begin_undo(), Undo::Job(Work::Trash(paths), _) if paths == [PathBuf::from("dest/a.txt")])
+            matches!(copy.begin_undo(), Undo::Job(Work::Trash(paths), _, back) if paths == [PathBuf::from("dest/a.txt")] && back.is_empty())
         );
 
         let moved = Action::Move {
             pairs: vec![(PathBuf::from("a/x"), PathBuf::from("b/x"))],
+            replaced: Replaced::default(),
         };
-        let Undo::Job(Work::Transfer { kind, pairs }, message) = moved.begin_undo() else {
+        let Undo::Job(Work::Transfer { kind, pairs }, message, _) = moved.begin_undo() else {
             panic!("move undoes as a job");
         };
         assert_eq!(kind, TransferKind::Move);
         assert_eq!(pairs, [(PathBuf::from("b/x"), PathBuf::from("a/x"))]);
         assert_eq!(message, "Moved 1 item back");
         assert_eq!(moved.done_message(), "Moved 1 item to “b”");
+    }
+
+    #[test]
+    fn replacing_copies_say_so_and_undo_says_what_comes_back() {
+        let copy = Action::Copy {
+            created: vec![PathBuf::from("game/scripts/menu.lua")],
+            replaced: Replaced {
+                paths: vec![PathBuf::from("game/scripts/menu.lua")],
+                in_bin: Vec::new(),
+            },
+        };
+        assert_eq!(
+            copy.done_message(),
+            "Copied 1 item to “scripts”, replacing 1 file"
+        );
+        let Undo::Job(_, message, _) = copy.begin_undo() else {
+            panic!("copy undoes as a job");
+        };
+        // Nothing in the bin to put back from here (as on macOS).
+        assert_eq!(
+            message,
+            "Removed the 1 copy. The file it replaced is in the Recycle Bin"
+        );
     }
 
     #[test]

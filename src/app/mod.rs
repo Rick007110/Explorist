@@ -637,6 +637,10 @@ impl ExploristApp {
         }
         // Dialogs and the palette handle their own keys.
         if self.view.confirm_delete.is_some()
+            || self
+                .job
+                .as_ref()
+                .is_some_and(|running| running.job.asking().is_some())
             || self.view.properties.is_some()
             || self.view.open_with.is_some()
             || self.view.drive_dialog.is_some()
@@ -1305,6 +1309,7 @@ impl eframe::App for ExploristApp {
         let toast_hovered = ui::toast::show(&ctx, self);
         self.expire_toast(&ctx, toast_hovered);
         ui::dialogs::confirm_delete(&ctx, self);
+        ui::dialogs::existing_files(&ctx, self);
         ui::properties::show(&ctx, self);
         ui::open_with::show(&ctx, self);
         ui::drive_dialog::show(&ctx, self);

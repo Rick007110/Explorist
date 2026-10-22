@@ -4,10 +4,11 @@
 use std::path::{Path, PathBuf};
 
 use crate::app::ExploristApp;
-use crate::app::undo::{Action, Undo};
+use crate::app::undo::{Action, Replaced, Undo};
 use crate::fs::clipboard;
 use crate::fs::entry::Entry;
 use crate::fs::jobs::{Job, Outcome, TransferKind, Work};
+use crate::fs::ops;
 
 /// A job plus what to do when it ends.
 pub struct RunningJob {
@@ -17,6 +18,8 @@ pub struct RunningJob {
     undo_message: Option<String>,
     /// Cut items: clear the clipboard after a successful paste.
     from_cut: bool,
+    /// Recycle Bin items to put back once this (undo) job is done.
+    restore: Vec<trash::TrashItem>,
 }
 
 impl ExploristApp {
@@ -170,7 +173,12 @@ impl ExploristApp {
             return;
         };
         match action.begin_undo() {
-            Undo::Job(work, message) => self.start_job(work, Some(message), false),
+            Undo::Job(work, message, restore) => {
+                self.start_job(work, Some(message), false);
+                if let Some(running) = &mut self.job {
+                    running.restore = restore;
+                }
+            }
             Undo::Done(Ok(message)) => {
                 self.toast(message, false);
                 // Folder icons go back with the names.
@@ -210,6 +218,7 @@ impl ExploristApp {
             job: Job::start(work, move || ctx.request_repaint()),
             undo_message,
             from_cut,
+            restore: Vec::new(),
         });
     }
 
@@ -264,7 +273,19 @@ impl ExploristApp {
                 kind: TransferKind::Move,
                 ..
             } => (
-                outcome.done.iter().map(|(from, _)| from.clone()).collect(),
+                outcome
+                    .done
+                    .iter()
+                    .map(|(from, _)| from.clone())
+                    // Folders emptied into one of the same name are gone.
+                    .chain(
+                        outcome
+                            .merged
+                            .iter()
+                            .filter(|(from, _)| !from.exists())
+                            .map(|(from, _)| from.clone()),
+                    )
+                    .collect(),
                 outcome.done.iter().map(|(_, to)| to.clone()).collect(),
             ),
             Work::Trash(_) | Work::Delete(_) => (
@@ -294,6 +315,10 @@ impl ExploristApp {
                 }
             }
             self.view.scroll_to_focus = true;
+        } else if let Some((_, into)) = outcome.merged.iter().find(|(_, into)| inside(into)) {
+            // Everything went into a folder that was here already.
+            self.browser.selection.select_only(into);
+            self.view.scroll_to_focus = true;
         } else if let Some(next) = next_focus {
             self.browser.selection.select_only(&next);
         }
@@ -304,19 +329,29 @@ impl ExploristApp {
         }
 
         // Record undo and say what happened.
+        let replaced = Replaced {
+            paths: outcome.replaced.clone(),
+            in_bin: outcome.replaced_in_bin.clone(),
+        };
         let action = match running.job.work {
-            _ if running.undo_message.is_some() || outcome.done.is_empty() => None,
+            _ if running.undo_message.is_some()
+                || (outcome.done.is_empty() && outcome.replaced.is_empty()) =>
+            {
+                None
+            }
             Work::Transfer {
                 kind: TransferKind::Copy,
                 ..
             } => Some(Action::Copy {
                 created: outcome.done.iter().map(|(_, to)| to.clone()).collect(),
+                replaced,
             }),
             Work::Transfer {
                 kind: TransferKind::Move,
                 ..
             } => Some(Action::Move {
                 pairs: outcome.done.clone(),
+                replaced,
             }),
             Work::Trash(_) => Some(Action::Trash {
                 paths: outcome.done.iter().map(|(p, _)| p.clone()).collect(),
@@ -329,6 +364,11 @@ impl ExploristApp {
                 })
             }
         };
+        let transfer = matches!(running.job.work, Work::Transfer { .. });
+        let skipped = match outcome.skipped {
+            0 => String::new(),
+            n => format!(", skipped {} already there", count(n)),
+        };
         if let Some((path, err)) = outcome.failed.first() {
             let name = path
                 .file_name()
@@ -339,15 +379,39 @@ impl ExploristApp {
                 n => format!("{n} items failed. First, “{name}”: {err}"),
             };
             self.toast_error(message);
+        } else if outcome.cancelled && outcome.done.is_empty() && action.is_none() {
+            self.toast("Cancelled".to_owned(), false);
         } else if outcome.cancelled {
             self.toast(
                 format!("Stopped after {}", count(outcome.done.len())),
                 action.is_some(),
             );
         } else if let Some(message) = running.undo_message {
-            self.toast(message, false);
+            // Then what the undone action replaced comes back.
+            match running.restore.as_slice() {
+                [] => self.toast(message, false),
+                items => match ops::restore_trashed(items) {
+                    Ok(()) => {
+                        self.browser.refresh();
+                        self.toast(message, false);
+                    }
+                    Err(err) => self.toast_error(format!(
+                        "Couldn’t put back the replaced files: {err}. They’re in the Recycle Bin."
+                    )),
+                },
+            }
         } else if let Some(action) = &action {
-            self.toast(action.done_message(), true);
+            self.toast(format!("{}{skipped}", action.done_message()), true);
+        } else if transfer && outcome.skipped > 0 {
+            self.toast(
+                format!(
+                    "Nothing new: skipped {} already there",
+                    count(outcome.skipped)
+                ),
+                false,
+            );
+        } else if transfer {
+            self.toast("Nothing to copy".to_owned(), false);
         } else {
             self.toast(format!("Deleted {}", count(outcome.done.len())), false);
         }
