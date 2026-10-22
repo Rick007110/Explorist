@@ -5,10 +5,11 @@
 use egui::{Align2, Color32, CornerRadius, Frame, Margin, Pos2, Rect, Sense, Stroke, vec2};
 
 use crate::app::ExploristApp;
+use crate::fs::entry::Entry;
 use crate::fs::format;
 use crate::fs::preview::Content;
 use crate::ui::icons::{self, Icon};
-use crate::ui::theme::{radius, text};
+use crate::ui::theme::{Palette, radius, text};
 
 pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
     if !app.view.quick_look {
@@ -48,6 +49,24 @@ pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
             wake.request_repaint()
         });
     let content = app.preview.poll().cloned();
+    // A folder's items as the list would show them.
+    let show_hidden = app.settings.show_hidden;
+    let listed: Option<(usize, Vec<&Entry>)> = match &content {
+        Some(Content::Folder { items, children }) => {
+            let shown: Vec<&Entry> = children
+                .iter()
+                .filter(|e| show_hidden || !(e.hidden || e.system))
+                .collect();
+            // All read: count what shows; otherwise the full count.
+            let count = if children.len() == *items {
+                shown.len()
+            } else {
+                *items
+            };
+            Some((count, shown))
+        }
+        _ => None,
+    };
 
     let size = vec2(
         (screen.width() * 0.72).clamp(420.0, 1100.0),
@@ -68,9 +87,24 @@ pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
                     ui.set_min_size(size - vec2(32.0, 32.0));
                     ui.set_max_size(size - vec2(32.0, 32.0));
                     ui.spacing_mut().item_spacing.y = 10.0;
-                    title(ui, &p, &entry);
+                    title(ui, &p, &entry, listed.as_ref().map(|(count, _)| *count));
                     let body = ui.available_rect_before_wrap();
                     match &content {
+                        Some(Content::Folder { items, children })
+                            if listed.as_ref().is_some_and(|(_, shown)| !shown.is_empty()) =>
+                        {
+                            let shown = listed.as_ref().map_or(&[][..], |(_, s)| &s[..]);
+                            let date_format = app.settings.date_format;
+                            folder_list(
+                                ui,
+                                &p,
+                                &entry,
+                                body,
+                                shown,
+                                items.saturating_sub(children.len()),
+                                date_format,
+                            );
+                        }
                         Some(Content::Image { pixels, scaled, .. }) => {
                             crate::ui::preview::ensure_image(
                                 ui.ctx(),
@@ -106,8 +140,9 @@ pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
                         }
                         other => {
                             let message = match other {
-                                Some(Content::Folder { items }) => {
-                                    format!("{} items", format::count(*items as u64))
+                                Some(Content::Folder { items: 0, .. }) => "Empty folder".to_owned(),
+                                Some(Content::Folder { items, .. }) => {
+                                    format!("{} hidden items", format::count(*items as u64))
                                 }
                                 Some(Content::Error(err)) => format!("Couldn’t preview: {err}"),
                                 None => "Loading…".to_owned(),
@@ -135,11 +170,103 @@ pub fn show(ctx: &egui::Context, app: &mut ExploristApp) {
         });
 }
 
-fn title(ui: &mut egui::Ui, p: &crate::ui::theme::Palette, entry: &crate::fs::entry::Entry) {
+/// A folder's contents, a row per item: icon, name, size and date.
+fn folder_list(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    folder: &Entry,
+    body: Rect,
+    shown: &[&Entry],
+    more: usize,
+    date_format: format::DateFormat,
+) {
+    const ROW: f32 = 30.0;
+    const DATE_W: f32 = 140.0;
+    const SIZE_W: f32 = 80.0;
+    // Items past those listed (`more`) show as one line at the end.
+    let rows = shown.len() + usize::from(more > 0);
+    ui.painter()
+        .rect_filled(body, CornerRadius::same(radius::MD), p.bg_0);
+    let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(body.shrink2(vec2(8.0, 6.0))));
+    egui::ScrollArea::vertical()
+        .id_salt(("quick-look-folder", &folder.path))
+        .auto_shrink([false, false])
+        .show_rows(&mut inner, ROW, rows, |ui, range| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for i in range {
+                let (rect, _) =
+                    ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::hover());
+                let Some(entry) = shown.get(i) else {
+                    ui.painter().text(
+                        rect.left_center() + vec2(32.0, 0.0),
+                        Align2::LEFT_CENTER,
+                        format!("…and {} more", format::count(more as u64)),
+                        text::caption(),
+                        p.muted,
+                    );
+                    continue;
+                };
+                let narrow = rect.width() < 420.0;
+                icons::paint_stroked(
+                    ui.painter(),
+                    Rect::from_center_size(rect.left_center() + vec2(12.0, 0.0), vec2(16.0, 16.0)),
+                    Icon::for_kind(entry.kind),
+                    16.0,
+                    1.5,
+                    if entry.is_dir { p.accent } else { p.text_2 },
+                );
+                let details_w = if narrow { SIZE_W } else { SIZE_W + DATE_W };
+                let name = crate::ui::widgets::truncated(
+                    ui,
+                    &entry.name,
+                    text::body(),
+                    if entry.hidden || entry.system {
+                        p.muted
+                    } else {
+                        p.text
+                    },
+                    rect.width() - 32.0 - details_w - 12.0,
+                );
+                ui.painter().galley(
+                    egui::pos2(rect.left() + 32.0, rect.center().y - name.size().y / 2.0),
+                    name,
+                    p.text,
+                );
+                let size = entry.size.map_or_else(|| "—".to_owned(), format::size);
+                let size_right = if narrow {
+                    rect.right()
+                } else {
+                    rect.right() - DATE_W
+                };
+                ui.painter().text(
+                    egui::pos2(size_right - 8.0, rect.center().y),
+                    Align2::RIGHT_CENTER,
+                    size,
+                    text::mono(),
+                    p.muted,
+                );
+                if !narrow && let Some(modified) = entry.modified {
+                    ui.painter().text(
+                        egui::pos2(rect.right() - 8.0, rect.center().y),
+                        Align2::RIGHT_CENTER,
+                        format::date(modified, date_format),
+                        text::mono(),
+                        p.muted,
+                    );
+                }
+            }
+        });
+}
+
+fn title(ui: &mut egui::Ui, p: &Palette, entry: &Entry, folder_items: Option<usize>) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
     let mut detail = entry.type_label.to_string();
     if let Some(size) = entry.size {
         detail.push_str(&format!(" · {}", format::size(size)));
+    }
+    if let Some(n) = folder_items {
+        let noun = if n == 1 { "item" } else { "items" };
+        detail.push_str(&format!(" · {} {noun}", format::count(n as u64)));
     }
     let detail_galley = ui
         .painter()

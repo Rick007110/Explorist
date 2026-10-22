@@ -4,6 +4,14 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
+## Unreleased
+
+### Changed
+- **Quick Look on a folder shows what's in it**: its folders and files with their sizes and dates, instead of only a large folder icon.
+
+### Fixed
+- In quick search, **Ctrl C** copied the search text instead of the result's path when the box reopened with your last search in it. Now it copies the path unless you've selected some of the text yourself.
+
 ## 0.4.0-beta2
 
 A second test version of 0.4.0. It adds a way to get betas through Explorist's own updates; everything else new in 0.4.0 is in the 0.4.0-beta1 notes. On 0.4.0-beta1, download this one by hand: that version can't find betas by itself.

@@ -61,6 +61,9 @@ struct Shared {
     open: bool,
     /// Focus the field and select what's in it.
     just_opened: bool,
+    /// The query is still selected only because the box selected it on
+    /// opening, not because the person picked it out.
+    auto_selected: bool,
     /// The box has had focus since opening, so losing it closes the box.
     had_focus: bool,
     query: String,
@@ -477,13 +480,22 @@ fn draw(ui: &mut egui::Ui, shared: &mut Shared) {
     if focused == Some(true) {
         shared.had_focus = true;
     }
-    // Ctrl C with nothing picked out in the field copies the result's path
-    // too: there's no text to copy then, and it's the one sure way on
-    // macOS, where a quick Cmd Shift C can arrive without its Shift.
+    // Ctrl C copies the result's path too unless the person picked out
+    // text in the field: the query the box selects on opening doesn't
+    // count. It's also the one sure way on macOS, where a quick Cmd Shift C
+    // can arrive without its Shift.
     let field_selection = egui::TextEdit::load_state(&ctx, Id::new("quick-search-field"))
         .and_then(|state| state.cursor.char_range())
         .is_some_and(|range| !range.is_empty());
-    let plain_copy = ui.input(|i| i.events.iter().any(|e| matches!(e, Event::Copy)));
+    let (plain_copy, select_all) = ui.input(|i| {
+        (
+            i.events.iter().any(|e| matches!(e, Event::Copy)),
+            i.events.iter().any(|e| {
+                matches!(e, Event::Key { key: Key::A, pressed: true, modifiers, .. } if modifiers.command)
+            }),
+        )
+    });
+    let picked_text = field_selection && (!shared.auto_selected || select_all);
     let command = Modifiers::COMMAND;
     let (escape, up, down, enter, reveal, copy) = ui.input_mut(|i| {
         let copy = copy_path_pressed(&i.events, i.modifiers.shift);
@@ -573,8 +585,25 @@ fn draw(ui: &mut egui::Ui, shared: &mut Shared) {
             .cursor
             .set_char_range(Some(CCursorRange::two(CCursor::new(0), CCursor::new(end))));
         state.store(&ctx, id);
-    } else if !output.response.has_focus() {
-        output.response.request_focus();
+        shared.auto_selected = end > 0;
+    } else {
+        if !output.response.has_focus() {
+            output.response.request_focus();
+        }
+        // Typing, clicking, Ctrl A or moving the cursor makes it theirs.
+        let whole = output.state.cursor.char_range().is_some_and(|range| {
+            let [start, end] = range.sorted_cursors();
+            start.index == CCursor::new(0).index
+                && end.index == CCursor::new(shared.query.chars().count()).index
+        });
+        if output.response.changed()
+            || output.response.clicked()
+            || output.response.drag_started()
+            || select_all
+            || !whole
+        {
+            shared.auto_selected = false;
+        }
     }
     if output.response.changed() {
         shared.selected = 0;
@@ -686,7 +715,7 @@ fn draw(ui: &mut egui::Ui, shared: &mut Shared) {
     if reveal && !shared.results.is_empty() {
         chosen = Some((shared.selected, true));
     }
-    let copy = copy || (plain_copy && !field_selection);
+    let copy = copy || (plain_copy && !picked_text);
     if copy && let Some(row) = shared.results.get(shared.selected) {
         let text = match &row.kind {
             RowKind::App(app) => app

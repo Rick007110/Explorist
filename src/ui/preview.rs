@@ -243,7 +243,7 @@ fn single(
             image_block(ui, app, p, &entry.path, *width, *height, pixels, *scaled);
             None
         }
-        Some(Content::Folder { items }) => Some(*items),
+        Some(Content::Folder { items, .. }) => Some(*items),
         Some(Content::None) => None,
         Some(Content::Error(err)) => {
             ui.label(

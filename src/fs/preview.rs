@@ -3,10 +3,13 @@
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
+use super::entry::Entry;
 use super::kind::FileKind;
+use super::sort::natural_cmp;
 
 /// Read at most this much of a text file.
 const TEXT_BYTES: usize = 64 * 1024;
@@ -16,6 +19,10 @@ const TEXT_LINES: usize = 400;
 const IMAGE_SIDE: u32 = 640;
 /// Don't decode images larger than this.
 const IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+/// List at most this many of a folder's items.
+const FOLDER_ITEMS: usize = 500;
+/// Read the details of at most this many items to pick them from.
+const FOLDER_SCAN: usize = 20_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Content {
@@ -33,7 +40,11 @@ pub enum Content {
         scaled: [usize; 2],
     },
     Folder {
+        /// How many items it holds.
         items: usize,
+        /// Its first items, folders first and then by name. Shared, as
+        /// the views copy the content every frame.
+        children: Arc<Vec<Entry>>,
     },
     /// Nothing to show beyond the details.
     None,
@@ -44,7 +55,7 @@ pub enum Content {
 pub fn load(path: &Path, kind: FileKind, is_dir: bool) -> Content {
     if is_dir {
         return match fs::read_dir(path) {
-            Ok(dir) => Content::Folder { items: dir.count() },
+            Ok(dir) => load_folder(dir),
             Err(err) => Content::Error(err.to_string()),
         };
     }
@@ -54,6 +65,29 @@ pub fn load(path: &Path, kind: FileKind, is_dir: bool) -> Content {
             load_text(path)
         }
         _ => Content::None,
+    }
+}
+
+fn load_folder(dir: fs::ReadDir) -> Content {
+    let mut items = 0;
+    let mut children = Vec::new();
+    for entry in dir.flatten() {
+        items += 1;
+        if children.len() < FOLDER_SCAN
+            && let Ok(entry) = Entry::from_dir_entry(&entry)
+        {
+            children.push(entry);
+        }
+    }
+    children.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| natural_cmp(&a.name, &b.name))
+    });
+    children.truncate(FOLDER_ITEMS);
+    Content::Folder {
+        items,
+        children: Arc::new(children),
     }
 }
 
@@ -238,14 +272,18 @@ mod tests {
     }
 
     #[test]
-    fn folders_count_items() {
+    fn folders_list_their_items() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("a"), b"").unwrap();
-        fs::write(dir.path().join("b"), b"").unwrap();
-        assert_eq!(
-            load(dir.path(), FileKind::Folder, true),
-            Content::Folder { items: 2 }
-        );
+        for name in ["file10.txt", "a.txt", "file2.txt"] {
+            fs::write(dir.path().join(name), b"").unwrap();
+        }
+        fs::create_dir(dir.path().join("zebra")).unwrap();
+        let Content::Folder { items, children } = load(dir.path(), FileKind::Folder, true) else {
+            panic!("not a folder preview");
+        };
+        assert_eq!(items, 4);
+        let names: Vec<&str> = children.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["zebra", "a.txt", "file2.txt", "file10.txt"]);
     }
 
     #[test]
