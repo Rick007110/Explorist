@@ -1,6 +1,7 @@
 //! Long file operations on a background thread: copy, move, Recycle Bin
 //! and permanent delete, with progress and cancel.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -30,6 +31,24 @@ pub enum Existing {
     Skip,
     /// Put the new ones beside them under a "- Copy" name.
     KeepBoth,
+}
+
+/// A file already where another is going.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Clash {
+    /// The one there.
+    pub there: PathBuf,
+    /// The one going there.
+    pub from: PathBuf,
+}
+
+/// What the person chose about the files already there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer {
+    /// The same for all of them.
+    All(Existing),
+    /// One for each, in the order they were asked about.
+    Each(Vec<Existing>),
 }
 
 /// What a job should do.
@@ -156,8 +175,8 @@ fn same_kind_or_free(src: &Path, dst: &Path) -> bool {
 
 /// The files already where `pairs` would put files, looking inside folders
 /// of the same name too, as those get merged.
-fn clashes(pairs: &[(PathBuf, PathBuf)]) -> Vec<PathBuf> {
-    fn walk(src: &Path, dst: &Path, found: &mut Vec<PathBuf>) {
+fn clashes(pairs: &[(PathBuf, PathBuf)]) -> Vec<Clash> {
+    fn walk(src: &Path, dst: &Path, found: &mut Vec<Clash>) {
         let (Ok(from), Ok(there)) = (fs::symlink_metadata(src), fs::symlink_metadata(dst)) else {
             return;
         };
@@ -167,7 +186,10 @@ fn clashes(pairs: &[(PathBuf, PathBuf)]) -> Vec<PathBuf> {
                     walk(&child.path(), &dst.join(child.file_name()), found);
                 }
             }
-            (false, false) => found.push(dst.to_path_buf()),
+            (false, false) => found.push(Clash {
+                there: dst.to_path_buf(),
+                from: src.to_path_buf(),
+            }),
             // A folder and a file: both are kept.
             _ => {}
         }
@@ -251,7 +273,7 @@ pub enum JobEvent {
     Progress(Progress),
     /// Files already where others are going: the job waits for
     /// [`Job::answer`].
-    Existing(Vec<PathBuf>),
+    Existing(Vec<Clash>),
     Finished(Outcome),
 }
 
@@ -259,9 +281,9 @@ pub enum JobEvent {
 pub struct Job {
     pub work: Work,
     events: Receiver<JobEvent>,
-    answers: Sender<Existing>,
+    answers: Sender<Answer>,
     /// Files already there, while the job waits to hear what to do.
-    asking: Option<Vec<PathBuf>>,
+    asking: Option<Vec<Clash>>,
     cancelled: Arc<AtomicBool>,
     progress: Progress,
 }
@@ -308,15 +330,15 @@ impl Job {
     }
 
     /// The files already there, while the job waits for [`Job::answer`].
-    pub fn asking(&self) -> Option<&[PathBuf]> {
+    pub fn asking(&self) -> Option<&[Clash]> {
         self.asking.as_deref()
     }
 
     /// What to do about the files already there. Can be given before the
     /// job asks.
-    pub fn answer(&mut self, choice: Existing) {
+    pub fn answer(&mut self, answer: Answer) {
         self.asking = None;
-        let _ = self.answers.send(choice);
+        let _ = self.answers.send(answer);
     }
 
     pub fn progress(&self) -> &Progress {
@@ -356,7 +378,7 @@ impl Job {
 
 struct Runner {
     tx: Sender<JobEvent>,
-    answers: Receiver<Existing>,
+    answers: Receiver<Answer>,
     cancelled: Arc<AtomicBool>,
     wake: Box<dyn Fn() + Send>,
     progress: Progress,
@@ -382,7 +404,7 @@ impl Runner {
     }
 
     /// Asks what to do about files already there; `None` if cancelled.
-    fn ask(&self, existing: Vec<PathBuf>) -> Option<Existing> {
+    fn ask(&self, existing: Vec<Clash>) -> Option<Answer> {
         self.send(JobEvent::Existing(existing));
         loop {
             if self.is_cancelled() {
@@ -400,25 +422,35 @@ impl Runner {
         let mut outcome = Outcome::default();
         match work {
             Work::Transfer { kind, pairs } => {
+                // What to do with each file already there.
                 let existing = clashes(&pairs);
-                let mut choice = Existing::KeepBoth;
+                let mut choices: HashMap<PathBuf, Existing> = HashMap::new();
                 if !existing.is_empty() {
-                    match self.ask(existing.clone()) {
-                        Some(answer) => choice = answer,
-                        None => {
-                            outcome.cancelled = true;
-                            return outcome;
-                        }
+                    let Some(answer) = self.ask(existing.clone()) else {
+                        outcome.cancelled = true;
+                        return outcome;
+                    };
+                    for (i, clash) in existing.into_iter().enumerate() {
+                        let choice = match &answer {
+                            Answer::All(choice) => *choice,
+                            Answer::Each(each) => each.get(i).copied().unwrap_or(Existing::Skip),
+                        };
+                        choices.insert(clash.there, choice);
                     }
                 }
-                if choice == Existing::Replace {
-                    match ops::trash_remembering(&existing) {
+                let replacing: Vec<PathBuf> = choices
+                    .iter()
+                    .filter(|(_, choice)| **choice == Existing::Replace)
+                    .map(|(path, _)| path.clone())
+                    .collect();
+                if !replacing.is_empty() {
+                    match ops::trash_remembering(&replacing) {
                         Ok(items) => {
-                            outcome.replaced = existing;
+                            outcome.replaced = replacing;
                             outcome.replaced_in_bin = items;
                         }
                         Err(err) => {
-                            outcome.failed = existing
+                            outcome.failed = replacing
                                 .into_iter()
                                 .map(|path| (path, format!("couldn’t replace it: {err}")))
                                 .collect();
@@ -436,7 +468,7 @@ impl Runner {
                         break;
                     }
                     self.progress.current = display_name(&src);
-                    match self.transfer_item(kind, &src, &dst, choice, &mut outcome) {
+                    match self.transfer_item(kind, &src, &dst, &choices, &mut outcome) {
                         Ok(()) => {}
                         Err(err) if err.kind() == io::ErrorKind::Interrupted => {
                             outcome.cancelled = true;
@@ -526,15 +558,16 @@ impl Runner {
 
     /// Copies or moves `src` to `dst`. Into a new place it goes whole; into
     /// a folder of the same name, item by item; past a file of the same
-    /// name as `choice` says. Records each item that went in `outcome`, so
-    /// undo and cancel only ever touch those, never what was there.
-    /// Returns `Interrupted` if cancelled.
+    /// name as `choices` says (keeping both for any not asked about).
+    /// Records each item that went in `outcome`, so undo and cancel only
+    /// ever touch those, never what was there. Returns `Interrupted` if
+    /// cancelled.
     fn transfer_item(
         &mut self,
         kind: TransferKind,
         src: &Path,
         dst: &Path,
-        choice: Existing,
+        choices: &HashMap<PathBuf, Existing>,
         outcome: &mut Outcome,
     ) -> io::Result<()> {
         if self.is_cancelled() {
@@ -574,7 +607,7 @@ impl Runner {
             for child in fs::read_dir(src)? {
                 let child = child?;
                 let target = dst.join(child.file_name());
-                self.transfer_item(kind, &child.path(), &target, choice, outcome)?;
+                self.transfer_item(kind, &child.path(), &target, choices, outcome)?;
             }
             if kind == TransferKind::Move {
                 // Empty now, unless something was skipped or failed.
@@ -582,7 +615,7 @@ impl Runner {
             }
             return Ok(());
         }
-        if from_dir == there.is_dir() && choice == Existing::Skip {
+        if from_dir == there.is_dir() && choices.get(dst) == Some(&Existing::Skip) {
             outcome.skipped += 1;
             return Ok(());
         }
@@ -590,7 +623,7 @@ impl Runner {
         let dir = dst.parent().unwrap_or(dst);
         let name = display_name(dst);
         let beside = free_name(dir, &name, false, &[]);
-        self.transfer_item(kind, src, &beside, choice, outcome)
+        self.transfer_item(kind, src, &beside, choices, outcome)
     }
 
     /// Copies a file or a whole folder. Returns `Interrupted` if cancelled.
@@ -665,7 +698,7 @@ mod tests {
     /// Runs a job that will ask about files already there.
     fn run_answering(work: Work, choice: Existing) -> Outcome {
         let mut job = Job::start(work, || {});
-        job.answer(choice);
+        job.answer(Answer::All(choice));
         job.wait()
     }
 
@@ -774,13 +807,19 @@ mod tests {
         let mut job = Job::start(work, || {});
         let asked = loop {
             job.poll();
-            if let Some(paths) = job.asking() {
-                break paths.to_vec();
+            if let Some(clashes) = job.asking() {
+                break clashes.to_vec();
             }
             std::thread::sleep(Duration::from_millis(5));
         };
-        assert_eq!(asked, [dir.path().join("dest/src/a.txt")]);
-        job.answer(Existing::Skip);
+        assert_eq!(
+            asked,
+            [Clash {
+                there: dir.path().join("dest/src/a.txt"),
+                from: dir.path().join("src/a.txt"),
+            }]
+        );
+        job.answer(Answer::All(Existing::Skip));
         let outcome = job.wait();
 
         let dest = dir.path().join("dest/src");
@@ -796,6 +835,29 @@ mod tests {
             outcome.done,
             [(dir.path().join("src/nested"), dest.join("nested"))]
         );
+    }
+
+    #[test]
+    fn each_file_can_get_its_own_answer() {
+        let dir = tree();
+        for name in ["one.txt", "two.txt"] {
+            fs::write(dir.path().join(name), b"new").unwrap();
+            fs::write(dir.path().join("dest").join(name), b"old").unwrap();
+        }
+        let sources = [dir.path().join("one.txt"), dir.path().join("two.txt")];
+        let mut job = Job::start(
+            Work::transfer(TransferKind::Copy, &sources, &dir.path().join("dest")).unwrap(),
+            || {},
+        );
+        job.answer(Answer::Each(vec![Existing::Skip, Existing::KeepBoth]));
+        let outcome = job.wait();
+        assert!(outcome.failed.is_empty(), "{outcome:?}");
+        assert_eq!(outcome.skipped, 1);
+        let dest = dir.path().join("dest");
+        assert_eq!(fs::read(dest.join("one.txt")).unwrap(), b"old");
+        assert!(!dest.join("one - Copy.txt").exists());
+        assert_eq!(fs::read(dest.join("two.txt")).unwrap(), b"old");
+        assert_eq!(fs::read(dest.join("two - Copy.txt")).unwrap(), b"new");
     }
 
     #[test]

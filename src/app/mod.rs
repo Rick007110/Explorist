@@ -113,6 +113,8 @@ pub struct ViewState {
     pub rename: Option<Rename>,
     pub toast: Option<Toast>,
     pub confirm_delete: Option<Vec<PathBuf>>,
+    /// Choosing file by file what to do about files already there.
+    pub existing: crate::ui::dialogs::ExistingDialog,
     pub properties: Option<crate::ui::properties::PropertiesState>,
     pub open_with: Option<crate::ui::open_with::OpenWithState>,
     pub drive_dialog: Option<crate::ui::drive_dialog::DriveDialog>,

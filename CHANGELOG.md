@@ -7,7 +7,8 @@ shows the first points.
 ## Unreleased
 
 ### Changed
-- **Folders go into folders of the same name**: dropping, pasting or moving a folder where one with the same name already is now puts its contents into that folder, as Windows does, instead of making "Name - Copy". When files with the same names are already there (or a file lands where one of the same name is), Explorist asks whether to **replace** them, **skip** them or **keep both**. Replaced files go to the Recycle Bin, and **Undo** puts everything back as it was.
+- **Folders go into folders of the same name**: dropping, pasting or moving a folder where one with the same name already is now puts its contents into that folder, as Windows does, instead of making "Name - Copy".
+- **Explorist asks before replacing files**: when a file you drop, paste or move (or one inside such a folder) has the same name as one already there, you choose to **replace** it, **skip** it or **keep both**. With several, choose once for all of them, or **Choose for each file** to go through them one by one, seeing the size and date of both and which is newer, with "Do the same for the files left" to finish quickly. Replaced files go to the Recycle Bin, and **Undo** puts everything back as it was.
 
 ## 0.4.0
 
