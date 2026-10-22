@@ -188,11 +188,12 @@ fn folder_list(
     ui.painter()
         .rect_filled(body, CornerRadius::same(radius::MD), p.bg_0);
     let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(body.shrink2(vec2(8.0, 6.0))));
+    // The rows touch, and the scroll area works out which to draw from that.
+    inner.spacing_mut().item_spacing.y = 0.0;
     egui::ScrollArea::vertical()
         .id_salt(("quick-look-folder", &folder.path))
         .auto_shrink([false, false])
         .show_rows(&mut inner, ROW, rows, |ui, range| {
-            ui.spacing_mut().item_spacing.y = 0.0;
             for i in range {
                 let (rect, _) =
                     ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::hover());

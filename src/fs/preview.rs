@@ -4,6 +4,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
@@ -53,9 +54,15 @@ pub enum Content {
 
 /// Works out what to show for `path`.
 pub fn load(path: &Path, kind: FileKind, is_dir: bool) -> Content {
+    load_unless(path, kind, is_dir, &|| false)
+}
+
+/// [`load`], giving up on a big folder once `stale` says nobody wants it
+/// any more.
+fn load_unless(path: &Path, kind: FileKind, is_dir: bool, stale: &dyn Fn() -> bool) -> Content {
     if is_dir {
         return match fs::read_dir(path) {
-            Ok(dir) => load_folder(dir),
+            Ok(dir) => load_folder(dir, stale),
             Err(err) => Content::Error(err.to_string()),
         };
     }
@@ -68,11 +75,14 @@ pub fn load(path: &Path, kind: FileKind, is_dir: bool) -> Content {
     }
 }
 
-fn load_folder(dir: fs::ReadDir) -> Content {
+fn load_folder(dir: fs::ReadDir, stale: &dyn Fn() -> bool) -> Content {
     let mut items = 0;
     let mut children = Vec::new();
     for entry in dir.flatten() {
         items += 1;
+        if items % 256 == 0 && stale() {
+            return Content::None;
+        }
         if children.len() < FOLDER_SCAN
             && let Ok(entry) = Entry::from_dir_entry(&entry)
         {
@@ -154,6 +164,8 @@ fn load_image(path: &Path) -> Content {
 /// moving through the list quickly never queues up work.
 #[derive(Default)]
 pub struct Loader {
+    /// Counts requests, so a load can tell it's been replaced.
+    generation: Arc<AtomicU64>,
     current: Option<PathBuf>,
     result: Option<(PathBuf, Content)>,
     pending: Option<Receiver<(PathBuf, Content)>>,
@@ -175,10 +187,13 @@ impl Loader {
         self.result = None;
         let (tx, rx) = mpsc::channel();
         let path = path.to_path_buf();
+        let generation = Arc::clone(&self.generation);
+        let mine = generation.fetch_add(1, Ordering::Relaxed) + 1;
         thread::Builder::new()
             .name("explorist-preview".into())
             .spawn(move || {
-                let content = load(&path, kind, is_dir);
+                let stale = || generation.load(Ordering::Relaxed) != mine;
+                let content = load_unless(&path, kind, is_dir, &stale);
                 if tx.send((path, content)).is_ok() {
                     wake();
                 }
@@ -189,6 +204,7 @@ impl Loader {
 
     /// Forgets the current preview, e.g. when nothing is selected.
     pub fn clear(&mut self) {
+        self.generation.fetch_add(1, Ordering::Relaxed);
         self.current = None;
         self.result = None;
         self.pending = None;
@@ -284,6 +300,22 @@ mod tests {
         assert_eq!(items, 4);
         let names: Vec<&str> = children.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["zebra", "a.txt", "file2.txt", "file10.txt"]);
+    }
+
+    #[test]
+    fn replaced_folder_loads_give_up() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..300 {
+            fs::write(dir.path().join(format!("f{i}")), b"").unwrap();
+        }
+        assert_eq!(
+            load_unless(dir.path(), FileKind::Folder, true, &|| true),
+            Content::None
+        );
+        assert!(matches!(
+            load_unless(dir.path(), FileKind::Folder, true, &|| false),
+            Content::Folder { items: 300, .. }
+        ));
     }
 
     #[test]
