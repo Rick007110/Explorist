@@ -4,7 +4,7 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
-## Unreleased
+## 0.4.1
 
 ### Changed
 - **Folders go into folders of the same name**: dropping, pasting or moving a folder where one with the same name already is now puts its contents into that folder, as Windows does, instead of making "Name - Copy".
