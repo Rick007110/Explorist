@@ -98,10 +98,26 @@ impl ExploristApp {
             return;
         }
         let ctx = self.ctx.clone();
-        self.update.checking = Some(update::check_in_background(move || ctx.request_repaint()));
+        self.update.checking = Some(update::check_in_background(
+            self.settings.updates.betas,
+            move || ctx.request_repaint(),
+        ));
         self.update.manual = manual;
         self.settings.updates.last_checked = Some(now_secs());
         self.save_settings();
+    }
+
+    /// Betas were turned on or off: what was on offer may not fit any more,
+    /// so check again and show what's newest now.
+    pub(crate) fn betas_changed(&mut self) {
+        if self.update.installing.is_some() || self.update.installed {
+            return;
+        }
+        // A check still running asked with the old setting.
+        self.update.checking = None;
+        self.update.offer = None;
+        self.update.last_result = None;
+        self.check_for_updates(true);
     }
 
     fn poll_updates(&mut self) {

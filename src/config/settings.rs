@@ -166,6 +166,9 @@ pub struct Updates {
     pub last_checked: Option<i64>,
     /// A version the user chose to skip; no prompt until a newer one.
     pub skipped_version: Option<String>,
+    /// Offer beta versions (pre-releases) too: new features sooner, but
+    /// more likely to have bugs. Only for people who turn it on.
+    pub betas: bool,
 }
 
 impl Default for Updates {
@@ -174,6 +177,7 @@ impl Default for Updates {
             check_automatically: true,
             last_checked: None,
             skipped_version: None,
+            betas: false,
         }
     }
 }
@@ -366,6 +370,7 @@ mod tests {
                 check_automatically: false,
                 last_checked: Some(1_791_900_000),
                 skipped_version: Some("0.2.0".into()),
+                betas: true,
             },
             start_in: StartIn::LastFolder,
             last_folder: Some(PathBuf::from("D:\\photos")),
@@ -479,6 +484,7 @@ mod tests {
     #[test]
     fn defaults_check_for_updates() {
         assert!(Settings::default().updates.check_automatically);
+        assert!(!Settings::default().updates.betas, "betas are opt-in");
     }
 
     #[test]

@@ -62,9 +62,39 @@ impl Ord for Version {
                 (None, None) => std::cmp::Ordering::Equal,
                 (Some(_), None) => std::cmp::Ordering::Less,
                 (None, Some(_)) => std::cmp::Ordering::Greater,
-                (Some(a), Some(b)) => a.cmp(b),
+                (Some(a), Some(b)) => compare_pre(a, b),
             })
     }
+}
+
+/// Compares pre-release tags with their numbers as numbers, so beta2 comes
+/// before beta10, as 1.0.0-beta.2 does before 1.0.0-beta.10.
+fn compare_pre(a: &str, b: &str) -> std::cmp::Ordering {
+    let (a, b) = (pre_chunks(a), pre_chunks(b));
+    for (x, y) in a.iter().zip(&b) {
+        let order = match (x.parse::<u64>(), y.parse::<u64>()) {
+            (Ok(x), Ok(y)) => x.cmp(&y),
+            _ => x.cmp(y),
+        };
+        if order.is_ne() {
+            return order;
+        }
+    }
+    a.len().cmp(&b.len())
+}
+
+/// "beta10" → ["beta", "10"]: runs of digits and of everything else.
+fn pre_chunks(text: &str) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    for i in 1..=bytes.len() {
+        if i == bytes.len() || bytes[i].is_ascii_digit() != bytes[start].is_ascii_digit() {
+            chunks.push(&text[start..i]);
+            start = i;
+        }
+    }
+    chunks
 }
 
 /// A published release.
@@ -142,6 +172,26 @@ fn parse_release_for(json: &str, platform: &str, arch: &str) -> Result<Release, 
     if api.draft || api.prerelease {
         return Err("not a final release".to_owned());
     }
+    Ok(release_from(api, platform, arch))
+}
+
+/// Reads GitHub's list of releases and picks the newest version, betas
+/// included; `None` when there are none.
+pub fn parse_newest(json: &str) -> Result<Option<Release>, String> {
+    parse_newest_for(json, PLATFORM, std::env::consts::ARCH)
+}
+
+fn parse_newest_for(json: &str, platform: &str, arch: &str) -> Result<Option<Release>, String> {
+    let list: Vec<ApiRelease> = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    let newest = list
+        .into_iter()
+        .filter(|r| !r.draft)
+        .filter_map(|r| Some((Version::parse(&r.tag_name)?, r)))
+        .max_by(|(a, _), (b, _)| a.cmp(b));
+    Ok(newest.map(|(_, api)| release_from(api, platform, arch)))
+}
+
+fn release_from(api: ApiRelease, platform: &str, arch: &str) -> Release {
     let picked = pick_asset(api.assets.iter().map(|a| a.name.as_str()), platform, arch);
     let download = picked.and_then(|name| {
         api.assets
@@ -149,12 +199,12 @@ fn parse_release_for(json: &str, platform: &str, arch: &str) -> Result<Release, 
             .find(|a| a.name == name)
             .map(|a| a.browser_download_url.clone())
     });
-    Ok(Release {
+    Release {
         version: api.tag_name.trim_start_matches(['v', 'V']).to_owned(),
         notes: api.body.unwrap_or_default(),
         page: api.html_url,
         download,
-    })
+    }
 }
 
 /// What a check found.
@@ -189,10 +239,16 @@ fn agent() -> ureq::Agent {
 }
 
 /// Asks GitHub for the latest release and compares it with this version.
-pub fn check() -> CheckResult {
+/// With `betas`, the newest pre-release counts too.
+pub fn check(betas: bool) -> CheckResult {
     // The update test in CI points this at a local server.
-    let url = std::env::var("EXPLORIST_UPDATE_API")
-        .unwrap_or_else(|_| format!("https://api.github.com/repos/{REPO}/releases/latest"));
+    let url = std::env::var("EXPLORIST_UPDATE_API").unwrap_or_else(|_| {
+        if betas {
+            format!("https://api.github.com/repos/{REPO}/releases?per_page=30")
+        } else {
+            format!("https://api.github.com/repos/{REPO}/releases/latest")
+        }
+    });
     let response = agent()
         .get(&url)
         .header("User-Agent", &format!("Explorist/{CURRENT}"))
@@ -216,7 +272,14 @@ pub fn check() -> CheckResult {
         Ok(body) => body,
         Err(err) => return CheckResult::Failed(err.to_string()),
     };
-    compare(parse_release(&body), CURRENT)
+    if !betas {
+        return compare(parse_release(&body), CURRENT);
+    }
+    match parse_newest(&body) {
+        Ok(Some(release)) => compare(Ok(release), CURRENT),
+        Ok(None) => CheckResult::NoReleases,
+        Err(err) => CheckResult::Failed(err),
+    }
 }
 
 fn compare(release: Result<Release, String>, current: &str) -> CheckResult {
@@ -234,7 +297,7 @@ fn compare(release: Result<Release, String>, current: &str) -> CheckResult {
 /// `explorist --update-now`: checks and installs without the window, for
 /// the end-to-end update test. Returns the process exit code.
 pub fn update_now() -> i32 {
-    match check() {
+    match check(false) {
         CheckResult::Available(release) => {
             let Some(url) = release.download else {
                 eprintln!("{} has no download for this platform", release.version);
@@ -267,12 +330,12 @@ pub fn update_now() -> i32 {
 }
 
 /// Runs [`check`] on a background thread.
-pub fn check_in_background(wake: impl Fn() + Send + 'static) -> Receiver<CheckResult> {
+pub fn check_in_background(betas: bool, wake: impl Fn() + Send + 'static) -> Receiver<CheckResult> {
     let (tx, rx) = mpsc::channel();
     thread::Builder::new()
         .name("explorist-update-check".into())
         .spawn(move || {
-            if tx.send(check()).is_ok() {
+            if tx.send(check(betas)).is_ok() {
                 wake();
             }
         })
@@ -559,6 +622,12 @@ mod tests {
         assert!(v("v1.0.0") > v("0.99.99"));
         assert!(v("1.0.0") > v("1.0.0-beta.2"));
         assert!(v("1.0.0-beta.2") > v("1.0.0-beta.1"));
+        assert!(v("1.0.0-beta.10") > v("1.0.0-beta.2"));
+        assert!(v("0.4.0-beta10") > v("0.4.0-beta2"));
+        assert!(v("0.4.0-rc1") > v("0.4.0-beta9"));
+        assert!(v("0.4.0-beta1") > v("0.4.0-beta"));
+        assert!(v("0.4.0") > v("0.4.0-beta1"));
+        assert!(v("0.4.0-beta1") > v("0.3.4"));
         assert!(v("1.10.0") > v("1.9.0"));
         assert_eq!(v("1.2"), v("1.2.0"));
         assert!(Version::parse("latest").is_none());
@@ -631,6 +700,54 @@ mod tests {
             compare(parse_release(&json), "0.1.0"),
             CheckResult::Failed(_)
         ));
+    }
+
+    fn list(releases: &[(&str, bool, bool)]) -> String {
+        let items: Vec<String> = releases
+            .iter()
+            .map(|(tag, draft, prerelease)| {
+                format!(
+                    r#"{{"tag_name": "{tag}", "html_url": "https://example.com/{tag}", "draft": {draft}, "prerelease": {prerelease}, "assets": []}}"#
+                )
+            })
+            .collect();
+        format!("[{}]", items.join(","))
+    }
+
+    #[test]
+    fn betas_get_the_newest_version_betas_included() {
+        let newest = |releases| {
+            parse_newest_for(&list(releases), "windows", "x86_64")
+                .unwrap()
+                .map(|r| r.version)
+        };
+        // GitHub lists the newest first, but go by the version anyway.
+        assert_eq!(
+            newest(&[
+                ("v0.3.4", false, false),
+                ("v0.4.0-beta2", false, true),
+                ("v0.4.0-beta10", false, true),
+                ("v0.5.0", true, false),
+            ])
+            .as_deref(),
+            Some("0.4.0-beta10"),
+            "drafts aren't offered"
+        );
+        assert_eq!(
+            newest(&[("v0.4.0", false, false), ("v0.4.0-beta1", false, true)]).as_deref(),
+            Some("0.4.0"),
+            "the full release once it's out"
+        );
+        assert_eq!(newest(&[]), None);
+        let json = list(&[("v0.4.0-beta1", false, true)]);
+        let release = parse_newest_for(&json, "windows", "x86_64")
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            compare(Ok(release.clone()), "0.3.4"),
+            CheckResult::Available(_)
+        ));
+        assert_eq!(compare(Ok(release), "0.4.0-beta1"), CheckResult::UpToDate);
     }
 
     #[test]

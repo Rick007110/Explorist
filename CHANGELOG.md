@@ -4,6 +4,11 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
+## Unreleased
+
+### New
+- **Beta versions**: turn on **Get beta versions** in Settings → General → Updates to be offered test versions of what's coming, so you can try new features before everyone else. Betas may have more bugs. It's off unless you turn it on, and turned off again, you keep your version until the next full release.
+
 ## 0.4.0-beta1
 
 A test version of 0.4.0, to try before it's released for everyone. Explorist's own update check doesn't offer it: download it below.

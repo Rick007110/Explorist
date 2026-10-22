@@ -114,14 +114,20 @@ Linux.
 3. The Release workflow builds the Windows installer and zip, the macOS
    disk image and zip, and the Linux tarball, and publishes them in one
    GitHub Release. To try packaging changes without publishing, push to
-   `release-dry-run`. Installed copies offer the update within a day (or on
-   *Settings → General → Check now*).
+   `release-dry-run`. Installed copies offer the update the next time they
+   start, or within 4 hours while running (or on *Settings → General →
+   Check now*).
+
+For a beta, use a version like `0.4.0-beta1`: it's published as a
+pre-release, and only copies with *Settings → General → Get beta
+versions* turned on offer it.
 
 To fix a published release's notes, edit `CHANGELOG.md` and push to the
 `release-notes` branch (`git push origin main:release-notes`).
 
-The update check reads the repository's latest release, so it only finds
-releases while the repository (or a release mirror) is public.
+The update check reads the repository's latest release (with betas turned
+on, its newest release, pre-releases included), so it only finds releases
+while the repository (or a release mirror) is public.
 
 ## Fonts and icons
 

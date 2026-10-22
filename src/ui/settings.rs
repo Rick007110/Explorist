@@ -80,6 +80,8 @@ struct Changes {
     unpin: Option<std::path::PathBuf>,
     close: bool,
     check_updates: bool,
+    /// Betas were turned on or off.
+    betas: bool,
 }
 
 pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
@@ -129,7 +131,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut ExploristApp) {
     if changes.settings {
         app.apply_settings();
     }
-    if changes.check_updates {
+    if changes.betas {
+        app.betas_changed();
+    } else if changes.check_updates {
         app.check_for_updates(true);
     }
     if changes.close {
@@ -306,7 +310,7 @@ fn section_rows(section: Section) -> Vec<(&'static str, &'static str)> {
             ("Pinned folders", "Shown under Favorites in the sidebar."),
             (
                 "Updates",
-                "Checks for a new version every time Explorist starts and every 4 hours while it runs.",
+                "Checks for a new version every time Explorist starts and every 4 hours while it runs. Turn on betas to try new features early.",
             ),
             (
                 "Quick search",
@@ -487,6 +491,27 @@ fn general(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mut
                     .color(p.text),
             );
         });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            if widgets::switch(ui, p, &mut s.updates.betas) {
+                changes.betas = true;
+            }
+            ui.label(
+                egui::RichText::new("Get beta versions")
+                    .font(text::body())
+                    .color(p.text),
+            );
+        });
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(
+                    "Betas bring new features before everyone else, but may have more bugs. Turned off, you keep your version until the next full release.",
+                )
+                .font(crate::ui::fonts::regular(12.0))
+                .color(p.muted),
+            )
+            .wrap(),
+        );
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 12.0;
             let label = if checking { "Checking…" } else { "Check now" };
