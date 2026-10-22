@@ -4,7 +4,9 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
-## Unreleased
+## 0.4.0-beta3
+
+A third test version of 0.4.0, with two fixes from testing 0.4.0-beta2. If you turned on Get beta versions, 0.4.0-beta2 offers it as an update.
 
 ### Changed
 - **Quick Look on a folder shows what's in it**: its folders and files with their sizes and dates, instead of only a large folder icon.
