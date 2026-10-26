@@ -177,6 +177,9 @@ pub mod size {
     pub const STATUS_BAR: f32 = 28.0;
     pub const SIDEBAR: f32 = 224.0;
     pub const PREVIEW: f32 = 320.0;
+    /// Window widths from which the sidebar and the preview panel show.
+    pub const SIDEBAR_FROM: f32 = 700.0;
+    pub const PREVIEW_FROM: f32 = 1000.0;
     pub const PREVIEW_HEADER: f32 = 44.0;
     pub const ICON: f32 = 16.0;
     pub const ICON_STROKE: f32 = 1.5;

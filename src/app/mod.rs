@@ -1330,8 +1330,13 @@ impl eframe::App for ExploristApp {
         } else {
             ui::toolbar::show(ui, self);
             ui::status_bar::show(ui, self);
-            ui::sidebar::show(ui, self);
-            if self.settings.show_preview {
+            // In a small window the side panels make way for the files:
+            // the preview first, then the sidebar.
+            let width = ui.available_width();
+            if width >= ui::theme::size::SIDEBAR_FROM {
+                ui::sidebar::show(ui, self);
+            }
+            if self.settings.show_preview && width >= ui::theme::size::PREVIEW_FROM {
                 ui::preview::show(ui, self);
             }
             ui::file_list::show(ui, self);

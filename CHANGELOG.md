@@ -7,6 +7,7 @@ shows the first points.
 ## Unreleased
 
 ### Changed
+- **The window can be much smaller**: down to 480 × 360 instead of 1280 × 720. In a small window the preview panel, and then the sidebar, make way for the files, and come back when there's room.
 - **macOS: one permission instead of many**: Explorist asks once for **Full Disk Access**, with a button that opens the right place in System Settings, instead of macOS asking separately about Desktop, Documents, Downloads and each drive. Until it's on, Explorist's background work (quick search's list of files, folder sizes) stays out of those places, so no questions pop up on their own. Settings → General shows whether it's on, and a folder macOS keeps Explorist out of explains how to let it in.
 
 ## 0.4.1

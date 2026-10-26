@@ -29,7 +29,7 @@ fn main() -> eframe::Result {
         .with_title("Explorist")
         .with_icon(icon())
         .with_inner_size([1440.0, 900.0])
-        .with_min_inner_size([1280.0, 720.0]);
+        .with_min_inner_size([480.0, 360.0]);
     // On macOS the native traffic lights sit over our tab bar; elsewhere the
     // app draws its own title bar and window buttons.
     let viewport = if cfg!(target_os = "macos") {
