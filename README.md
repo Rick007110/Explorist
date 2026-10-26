@@ -125,6 +125,13 @@ versions* turned on offer it.
 To fix a published release's notes, edit `CHANGELOG.md` and push to the
 `release-notes` branch (`git push origin main:release-notes`).
 
+The macOS app is signed with a self-signed certificate kept in the
+`MACOS_CERT_P12` (base64 of the .p12) and `MACOS_CERT_PASSWORD` secrets.
+macOS ties the permissions people give Explorist, like Full Disk Access,
+to that signature, so with the same certificate every release they carry
+over to updates. Without the secrets the app is signed ad hoc, and macOS
+asks again after each update. A new certificate does that once too.
+
 The update check reads the repository's latest release (with betas turned
 on, its newest release, pre-releases included), so it only finds releases
 while the repository (or a release mirror) is public.

@@ -129,6 +129,31 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --target aarch64-apple-darwin
       - run: cargo build --release --target x86_64-apple-darwin
+      # The same certificate signs every release, so macOS keeps the
+      # permissions people gave Explorist (like Full Disk Access) across
+      # updates; it ties them to the signature. It's self-signed, kept in
+      # the MACOS_CERT_P12 (base64) and MACOS_CERT_PASSWORD secrets.
+      # Without them, the app is signed ad hoc and macOS forgets.
+      - name: Signing certificate
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          if [ -z "$CERT_P12" ]; then
+            echo "::warning::No MACOS_CERT_P12 secret: signing ad hoc"
+            echo "SIGN_IDENTITY=-" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          security create-keychain -p "" "$keychain"
+          security set-keychain-settings "$keychain"
+          security unlock-keychain -p "" "$keychain"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/signing.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          echo "SIGN_IDENTITY=Explorist Code Signing" >> "$GITHUB_ENV"
       - name: Package Explorist.app (Apple Silicon and Intel)
         run: |
           app="Explorist.app"
@@ -158,8 +183,15 @@ jobs:
           </dict>
           </plist>
           PLIST
-          # Not notarized: sign ad hoc so Apple Silicon will run it.
-          codesign --force --deep --sign - "$app"
+          # Not notarized. Signed with the certificate above (or ad hoc),
+          # so Apple Silicon will run it.
+          codesign --force --deep --sign "$SIGN_IDENTITY" "$app"
+          codesign --verify --deep --strict "$app"
+          codesign --display --requirements - "$app"
+          if [ "$SIGN_IDENTITY" != "-" ]; then
+            # A requirement naming the certificate is what keeps permissions.
+            codesign --display --requirements - "$app" 2>&1 | grep -q "certificate"
+          fi
           # The zip is for the app's updater; people download the disk image.
           ditto -c -k --keepParent "$app" "explorist-$VERSION-macos-universal.zip"
           mkdir dmg
