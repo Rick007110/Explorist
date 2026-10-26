@@ -4,6 +4,11 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
+## Unreleased
+
+### Changed
+- **macOS: one permission instead of many**: Explorist asks once for **Full Disk Access**, with a button that opens the right place in System Settings, instead of macOS asking separately about Desktop, Documents, Downloads and each drive. Until it's on, Explorist's background work (quick search's list of files, folder sizes) stays out of those places, so no questions pop up on their own. Settings → General shows whether it's on, and a folder macOS keeps Explorist out of explains how to let it in.
+
 ## 0.4.1
 
 ### Changed

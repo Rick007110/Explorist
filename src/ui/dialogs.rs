@@ -348,3 +348,87 @@ fn name(path: &Path) -> String {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
 }
+
+/// macOS: asks once for Full Disk Access, the one setting that stands in
+/// for the questions macOS would otherwise ask folder by folder.
+pub fn full_disk_access(ctx: &egui::Context, app: &mut ExploristApp) {
+    if !app.view.full_disk_prompt {
+        return;
+    }
+    let p = app.palette;
+    let lost = app.settings.had_full_disk;
+    let mut decision: Option<bool> = None;
+    let modal = Modal::new(Id::new("full-disk-access"))
+        .backdrop_color(p.scrim)
+        .frame(
+            Frame::NONE
+                .fill(p.surface)
+                .stroke(Stroke::new(1.0, p.border))
+                .corner_radius(CornerRadius::same(radius::LG))
+                .shadow(p.shadow_modal())
+                .inner_margin(Margin::same(24)),
+        )
+        .show(ctx, |ui| {
+            ui.set_width(460.0);
+            ui.spacing_mut().item_spacing.y = 8.0;
+            ui.label(
+                egui::RichText::new("Give Explorist Full Disk Access")
+                    .font(text::heading())
+                    .color(p.text),
+            );
+            let why = if lost {
+                "macOS no longer gives Explorist Full Disk Access, which can happen after an update. Turn it on again so Explorist can show and search all your files."
+            } else {
+                "Otherwise macOS asks separately before Explorist can look in Desktop, Documents, Downloads or a drive. With Full Disk Access it’s one setting, and quick search finds all your files."
+            };
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(why)
+                        .font(text::body())
+                        .color(p.text_2),
+                )
+                .wrap(),
+            );
+            let steps = [
+                "In System Settings, turn on Explorist under Full Disk Access. If it isn’t in the list, click + and choose Explorist in Applications.",
+                "Choose Quit & Reopen when macOS asks.",
+            ];
+            for (n, step) in steps.iter().enumerate() {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(format!("{}. {step}", n + 1))
+                            .font(text::body())
+                            .color(p.text),
+                    )
+                    .wrap(),
+                );
+            }
+            ui.add_space(12.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let open = widgets::button(
+                    ui,
+                    &p,
+                    "Open System Settings",
+                    ButtonStyle::Primary,
+                    Some("Enter"),
+                );
+                let later = widgets::button(ui, &p, "Not now", ButtonStyle::Ghost, Some("Esc"));
+                if open.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    decision = Some(true);
+                } else if later.clicked() {
+                    decision = Some(false);
+                }
+            });
+        });
+    if modal.should_close() && decision.is_none() {
+        decision = Some(false);
+    }
+    let Some(open) = decision else { return };
+    app.view.full_disk_prompt = false;
+    app.settings.full_disk_asked = true;
+    app.save_settings();
+    if open && let Err(err) = crate::fs::disk_access::open_settings() {
+        app.toast_error(format!("Couldn’t open System Settings: {err}"));
+    }
+}

@@ -67,6 +67,11 @@ pub struct Settings {
     pub active_tab: usize,
     /// Show git badges and the branch (needs git installed).
     pub git_status: bool,
+    /// macOS: Explorist has asked for Full Disk Access.
+    pub full_disk_asked: bool,
+    /// macOS: it had Full Disk Access last time, so it asks again if that
+    /// was lost (as an update can make macOS forget it).
+    pub had_full_disk: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -121,6 +126,8 @@ impl Default for Settings {
             open_tabs: Vec::new(),
             active_tab: 0,
             git_status: true,
+            full_disk_asked: false,
+            had_full_disk: false,
         }
     }
 }
@@ -408,6 +415,8 @@ mod tests {
             open_tabs: vec![PathBuf::from("C:\\Users"), PathBuf::from("D:\\photos")],
             active_tab: 1,
             git_status: false,
+            full_disk_asked: true,
+            had_full_disk: true,
         };
         settings.save(&path).unwrap();
         assert!(!path.with_extension("toml.tmp").exists());

@@ -304,23 +304,32 @@ fn heading(ui: &mut egui::Ui, p: &Palette, section: Section, scroll_here: bool) 
 /// Titles and descriptions per section, for search.
 fn section_rows(section: Section) -> Vec<(&'static str, &'static str)> {
     match section {
-        Section::General => vec![
-            ("Start in", "The folder Explorist opens with."),
-            ("Show hidden files", "Hidden and system items. Also Ctrl H."),
-            ("Pinned folders", "Shown under Favorites in the sidebar."),
-            (
-                "Updates",
-                "Checks for a new version every time Explorist starts and every 4 hours while it runs. Turn on betas to try new features early.",
-            ),
-            (
-                "Quick search",
-                "A shortcut that works in any app and opens a box over everything for finding any app or file on this device. Explorist keeps a list of every file name, so results come as you type.",
-            ),
-            (
-                "Close to tray",
-                "Closing the window keeps Explorist running in the tray (the menu bar on macOS), so it opens instantly. Quit from its icon. Off: closing quits.",
-            ),
-        ],
+        Section::General => {
+            let mut rows = vec![
+                ("Start in", "The folder Explorist opens with."),
+                ("Show hidden files", "Hidden and system items. Also Ctrl H."),
+                ("Pinned folders", "Shown under Favorites in the sidebar."),
+                (
+                    "Updates",
+                    "Checks for a new version every time Explorist starts and every 4 hours while it runs. Turn on betas to try new features early.",
+                ),
+                (
+                    "Quick search",
+                    "A shortcut that works in any app and opens a box over everything for finding any app or file on this device. Explorist keeps a list of every file name, so results come as you type.",
+                ),
+                (
+                    "Close to tray",
+                    "Closing the window keeps Explorist running in the tray (the menu bar on macOS), so it opens instantly. Quit from its icon. Off: closing quits.",
+                ),
+            ];
+            if cfg!(target_os = "macos") {
+                rows.push((
+                    "Full Disk Access",
+                    "One macOS setting that lets Explorist show and search all your files, instead of macOS asking about Desktop, Documents, Downloads and each drive separately.",
+                ));
+            }
+            rows
+        }
         Section::Appearance => vec![
             (
                 "Theme",
@@ -606,6 +615,41 @@ fn general(ui: &mut egui::Ui, app: &mut ExploristApp, p: &Palette, changes: &mut
             );
         }
     });
+    if let Some((title, description)) = rows.get(6) {
+        let full = crate::fs::disk_access::full();
+        let mut failed = None;
+        row(ui, &query, p, title, description, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                let button = widgets::button(
+                    ui,
+                    p,
+                    "Open System Settings",
+                    ButtonStyle::Secondary,
+                    None,
+                );
+                if button.clicked() {
+                    failed = crate::fs::disk_access::open_settings().err();
+                }
+                let status = if full {
+                    "On: Explorist can see and search all your files."
+                } else {
+                    "Off: quick search leaves out Desktop, Documents, Downloads and other drives. After turning it on, choose Quit & Reopen."
+                };
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(status)
+                            .font(crate::ui::fonts::regular(12.0))
+                            .color(p.muted),
+                    )
+                    .wrap(),
+                );
+            });
+        });
+        if let Some(err) = failed {
+            app.toast_error(format!("Couldn’t open System Settings: {err}"));
+        }
+    }
     commit(app, s, changes);
 }
 

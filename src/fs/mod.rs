@@ -7,6 +7,7 @@ pub mod archive;
 pub mod batch;
 pub mod clipboard;
 pub mod dirsize;
+pub mod disk_access;
 pub mod entry;
 pub mod filter;
 pub mod format;

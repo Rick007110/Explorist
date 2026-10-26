@@ -115,6 +115,8 @@ pub struct ViewState {
     pub confirm_delete: Option<Vec<PathBuf>>,
     /// Choosing file by file what to do about files already there.
     pub existing: crate::ui::dialogs::ExistingDialog,
+    /// macOS: the question about Full Disk Access is showing.
+    pub full_disk_prompt: bool,
     pub properties: Option<crate::ui::properties::PropertiesState>,
     pub open_with: Option<crate::ui::open_with::OpenWithState>,
     pub drive_dialog: Option<crate::ui::drive_dialog::DriveDialog>,
@@ -307,9 +309,11 @@ impl ExploristApp {
             }
         }
         app.check_for_updates_at_start();
+        let gained_full_disk = app.check_full_disk_access();
         // Quick search: have the device's list ready before it's needed.
+        // Newly with Full Disk Access, the saved one lacks what it left out.
         if app.settings.quick_search && app.is_first_instance() {
-            if Self::device_index_file().is_some_and(|f| f.is_file()) {
+            if !gained_full_disk && Self::device_index_file().is_some_and(|f| f.is_file()) {
                 app.load_saved_device_index();
             } else {
                 app.ensure_device_index();
@@ -534,8 +538,13 @@ impl ExploristApp {
         } else {
             roots
         };
+        // Without Full Disk Access, macOS would ask about each of these.
+        let roots: Vec<PathBuf> = roots
+            .into_iter()
+            .filter(|root| !crate::fs::disk_access::keep_out(root))
+            .collect();
         // System areas that are virtual, or the same files again.
-        let skip: Vec<PathBuf> = if cfg!(target_os = "macos") {
+        let mut skip: Vec<PathBuf> = if cfg!(target_os = "macos") {
             [
                 "/System/Volumes",
                 "/Volumes",
@@ -562,6 +571,7 @@ impl ExploristApp {
             .map(PathBuf::from)
             .collect()
         };
+        skip.extend(crate::fs::disk_access::kept_out());
         let ctx = self.ctx.clone();
         let index = Arc::new(crate::fs::index::NameIndex::start(roots, skip, move || {
             ctx.request_repaint()
@@ -572,6 +582,25 @@ impl ExploristApp {
             self.device_index = Some((Instant::now(), index));
             self.device_index_unsaved = true;
         }
+    }
+
+    /// macOS: asks once for Full Disk Access, and again if it was lost.
+    /// Returns whether it's newly there since the last start.
+    fn check_full_disk_access(&mut self) -> bool {
+        if !cfg!(target_os = "macos") {
+            return false;
+        }
+        let full = crate::fs::disk_access::full();
+        let settings = &self.settings;
+        if !full && (!settings.full_disk_asked || settings.had_full_disk) {
+            self.view.full_disk_prompt = true;
+        }
+        let gained = full && !settings.had_full_disk;
+        if settings.had_full_disk != full {
+            self.settings.had_full_disk = full;
+            self.save_settings();
+        }
+        gained
     }
 
     /// Reads the drive list again on the next frame, e.g. after a copy
@@ -643,6 +672,7 @@ impl ExploristApp {
                 .job
                 .as_ref()
                 .is_some_and(|running| running.job.asking().is_some())
+            || self.view.full_disk_prompt
             || self.view.properties.is_some()
             || self.view.open_with.is_some()
             || self.view.drive_dialog.is_some()
@@ -1312,6 +1342,7 @@ impl eframe::App for ExploristApp {
         self.expire_toast(&ctx, toast_hovered);
         ui::dialogs::confirm_delete(&ctx, self);
         ui::dialogs::existing_files(&ctx, self);
+        ui::dialogs::full_disk_access(&ctx, self);
         ui::properties::show(&ctx, self);
         ui::open_with::show(&ctx, self);
         ui::drive_dialog::show(&ctx, self);

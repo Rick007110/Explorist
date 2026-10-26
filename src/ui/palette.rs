@@ -133,7 +133,7 @@ fn results(app: &mut ExploristApp) -> Vec<Item> {
         let ctx = app.ctx.clone();
         state.index = Some(NameIndex::start(
             vec![app.browser.location().to_path_buf()],
-            Vec::new(),
+            crate::fs::disk_access::kept_out(),
             move || ctx.request_repaint(),
         ));
     }

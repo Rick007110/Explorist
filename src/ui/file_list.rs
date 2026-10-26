@@ -1431,7 +1431,17 @@ fn error_state(
 ) {
     let p = app.palette;
     let name = folder_name(app.browser.location());
+    // macOS keeps Explorist out until it has Full Disk Access.
+    let mac_blocked = cfg!(target_os = "macos")
+        && err.kind == ListErrorKind::AccessDenied
+        && !crate::fs::disk_access::full();
     let (title, body) = match err.kind {
+        ListErrorKind::AccessDenied if mac_blocked => (
+            "macOS hasn’t let Explorist in here".to_owned(),
+            format!(
+                "Give Explorist Full Disk Access in System Settings, then choose Quit & Reopen, and it can open “{name}” and every other folder."
+            ),
+        ),
         ListErrorKind::AccessDenied => (
             "You don’t have access to this folder".to_owned(),
             if cfg!(windows) {
@@ -1468,6 +1478,7 @@ fn error_state(
     } else {
         Icon::Warning
     };
+    let mut settings_failed = None;
     centered_state(ui, &p, icon, Some(p.error), &title, &body, |ui| {
         let chip = ui
             .painter()
@@ -1479,13 +1490,16 @@ fn error_state(
             .galley(rect.min + vec2(8.0, 2.0), chip, p.muted);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            let retry = if elevate {
+            let retry = if mac_blocked {
+                "Open System Settings"
+            } else if elevate {
                 "Retry as administrator"
             } else {
                 "Try again"
             };
+            let second_try = elevate || mac_blocked;
             let mut total = widgets::button_width(ui, &p, retry, ButtonStyle::Primary, None);
-            if elevate {
+            if second_try {
                 total +=
                     8.0 + widgets::button_width(ui, &p, "Try again", ButtonStyle::Secondary, None);
             }
@@ -1501,13 +1515,17 @@ fn error_state(
             }
             ui.add_space(((ui.available_width() - total) / 2.0).max(0.0));
             if widgets::button(ui, &p, retry, ButtonStyle::Primary, None).clicked() {
-                if elevate {
+                if mac_blocked {
+                    if let Err(err) = crate::fs::disk_access::open_settings() {
+                        settings_failed = Some(err);
+                    }
+                } else if elevate {
                     commands.push(Command::OpenAsAdmin);
                 } else {
                     commands.push(Command::Refresh);
                 }
             }
-            if elevate
+            if second_try
                 && widgets::button(ui, &p, "Try again", ButtonStyle::Secondary, None).clicked()
             {
                 commands.push(Command::Refresh);
@@ -1532,6 +1550,9 @@ fn error_state(
             ui.ctx().copy_text(details.clone());
         }
     });
+    if let Some(err) = settings_failed {
+        app.toast_error(format!("Couldn’t open System Settings: {err}"));
+    }
 }
 
 fn folder_name(path: &Path) -> String {

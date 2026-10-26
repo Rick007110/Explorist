@@ -67,6 +67,8 @@ impl ExploristApp {
             .iter()
             .filter(|e| e.is_dir)
             .map(|e| e.path.as_path())
+            // Without Full Disk Access, macOS would ask about each of these.
+            .filter(|path| !crate::fs::disk_access::would_ask(path))
             .collect();
         let stale = sizes.sizer.is_none()
             || sizes.folder != location
