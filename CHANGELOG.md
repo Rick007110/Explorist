@@ -4,7 +4,7 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
-## Unreleased
+## 0.4.2
 
 ### Changed
 - **The window can be much smaller**: down to 480 × 360 instead of 1280 × 720. In a small window the preview panel, and then the sidebar, make way for the files, and come back when there's room.
