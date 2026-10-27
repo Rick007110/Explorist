@@ -749,7 +749,7 @@ fn draw(ui: &mut egui::Ui, shared: &mut Shared) {
                 } else if !path.exists() {
                     shared.error = Some(format!("“{}” isn't there any more.", name_of(&path)));
                 } else {
-                    match open::that_detached(&path) {
+                    match crate::fs::shell::open_default(&path) {
                         Ok(()) => shared.close(&ctx),
                         Err(err) => shared.error = Some(format!("Couldn't open it: {err}")),
                     }

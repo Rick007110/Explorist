@@ -4,6 +4,11 @@ What's new in each version of Explorist. The release workflow publishes
 each version's section as its release notes, and the in-app update prompt
 shows the first points.
 
+## Unreleased
+
+### Fixed
+- On Windows, programs opened from Explorist started in Explorist's own folder instead of their own, so games and mod tools that look for files beside them (like Overstrike's `scripts_proxy.dll`) couldn't find them. They now start in their own folder, as from Windows Explorer.
+
 ## 0.4.2
 
 ### Changed

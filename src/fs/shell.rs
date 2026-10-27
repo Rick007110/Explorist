@@ -5,8 +5,46 @@ use std::path::Path;
 use std::process::Command;
 
 /// Opens a file with its default app, without waiting for it.
+#[cfg(not(windows))]
 pub fn open_default(path: &Path) -> io::Result<()> {
     open::that_detached(path)
+}
+
+/// Opens a file with its default app, without waiting for it, starting
+/// in the file's folder as Explorer does. Without that, a program started
+/// from here would start in Explorist's own folder, and games and mod
+/// tools that look for their files beside them wouldn't find them.
+#[cfg(windows)]
+pub fn open_default(path: &Path) -> io::Result<()> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    if path.is_dir() {
+        return open::that_detached(path);
+    }
+    let wide = |s: &std::ffi::OsStr| -> Vec<u16> {
+        use std::os::windows::ffi::OsStrExt;
+        s.encode_wide().chain(Some(0)).collect()
+    };
+    let file = wide(path.as_os_str());
+    let dir = path.parent().map(|d| wide(d.as_os_str()));
+    // SAFETY: every pointer is to a NUL-terminated UTF-16 buffer that
+    // outlives the call, or null.
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            file.as_ptr(),
+            std::ptr::null(),
+            dir.as_ref().map_or(std::ptr::null(), |d| d.as_ptr()),
+            SW_SHOWNORMAL,
+        )
+    };
+    // Values above 32 mean it started.
+    if result as isize > 32 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
 }
 
 /// Opens a terminal in `dir`: Windows Terminal if installed, else
